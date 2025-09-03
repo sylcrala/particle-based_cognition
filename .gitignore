@@ -1,0 +1,8 @@
+/docs/
+/tests/
+/models/
+
+.venv/
+.pyc
+__pycache__/
+

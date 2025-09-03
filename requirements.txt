@@ -1,0 +1,32 @@
+# Core ML and AI Libraries
+torch>=2.0.0
+transformers>=4.21.0
+numpy>=1.21.0
+pillow>=9.0.0 
+pandas
+
+# Database and Vector Storage
+chromadb>=0.4.0
+
+# UI Framework
+textual>=0.30.0
+textual-dev
+
+# System Monitoring (optional)
+psutil>=5.9.0
+
+# Additional utilities that might be needed
+# Uncomment if you encounter import errors:
+accelerate>=0.20.0  # For optimized model loading
+bitsandbytes>=0.41.0  # For 4-bit quantization
+# scipy>=1.9.0  # For advanced mathematical operations
+# scikit-learn>=1.1.0  # For additional ML utilities
+
+# Development and Testing
+# pytest>=7.0.0  # For running tests
+# black>=22.0.0  # For code formatting
+# flake8>=5.0.0  # For linting
+
+# External Resources
+nltk
+spacy
