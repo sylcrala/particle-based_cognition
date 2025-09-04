@@ -5,54 +5,70 @@ from textual.app import ComposeResult
 from apis.api_registry import api
 
 class TodoList(Vertical):
-
     CSS = """
-    TodoList {
-        height: 1fr;
+    #content-switcher {
+        height: 100%;
+        width: 100%;
+    }
+    #TodoList {
+        height: 100%;
         padding: 1;
     }
     
-    .todo-title {
+    #todo-title {
         text-align: center;
         color: cyan;
         margin-bottom: 1;
+        height: 3;
+        border: solid white;
+        padding: 1;
     }
 
     #todo-container {
-        height: 1fr;
+        height: 100%;
     }
 
     #task-viewer {
-        width: 2fr;
+        width: 80%;
         border: solid blue;
         padding: 1;
         margin-right: 1;
     }
     
     #task-management {
-        width: 1fr;
+        width: 100%;
         border: solid green;
         padding: 1;
     }
 
-    .task-viewer-btn {
+    #task-viewer-btn {
         margin: 0 1;
         min-width: 15;
     }
     
-    .task-management-btn {
+    #task-management-btn {
         margin-bottom: 1;
         width: 100%;
+        max-width: 20;
     }
+
+    #task-viewer-buttons {
+        margin-bottom: 1;
+        justify-content: center;
+        align-items: center;
+        max-height: 3;
+        display: flex;
+    }
+        
 
     #task-list {
         border: solid yellow;
-        height: 1fr;
+        height: 90%;
         margin-top: 1;
         padding: 1;
-        height: 90%;
     }
     """
+
 
     def __init__(self):
         super().__init__()
@@ -65,15 +81,15 @@ class TodoList(Vertical):
     def compose(self) -> ComposeResult:
         with ContentSwitcher(initial = "main", id = "content-switcher"):
             with Vertical(id = "main"):
-                yield Static("To-Do List", classes="todo-title")
-                with Horizontal(id="todo-container"):
-                    with Vertical(id="task-viewer"):
-                        with Horizontal():
-                            yield Button("All", id="view-all-btn", classes="task-viewer-btn", variant="primary")
-                            yield Button("Pending", id="view-incomplete-btn", classes="task-viewer-btn", variant="default")
-                            yield Button("Done", id="view-completed-btn", classes="task-viewer-btn", variant="success")
+                yield Static("To-Do List", id="todo-title")
+                with Vertical(id="task-viewer"):
+                    with Horizontal(id="task-viewer-buttons"):
+                        yield Button("All", id="view-all-btn", classes="task-viewer-btn", variant="primary")
+                        yield Button("Pending", id="view-incomplete-btn", classes="task-viewer-btn", variant="default")
+                        yield Button("Done", id="view-completed-btn", classes="task-viewer-btn", variant="success")
+                    with Vertical(id="task-list"):
                         yield self.TaskViewer(self.todo_list_api)
-                    with Vertical(id="task-management"):
+                    with Horizontal(id="task-management", classes="task-management"):
                         yield Button("Add Task", id="add-task-btn", classes="task-management-btn", variant="primary")
                         yield Button("Complete Task", id="complete-task-btn", classes="task-management-btn", variant="success")
                         yield Button("Remove Task", id="remove-task-btn", classes="task-management-btn", variant="error")
