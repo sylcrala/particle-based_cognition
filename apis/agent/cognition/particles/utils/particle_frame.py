@@ -391,6 +391,62 @@ class Particle:
         self.superposition['uncertain'] = 1.0 - self.superposition['certain']
         other_particle.superposition['uncertain'] = 1.0 - other_particle.superposition['certain']
 
+    def age_to_size(self, age):
+        """Map temporal dimension to visual size"""
+        return min(max(age / 3600, 0.1), 2.0)  # 1 hour = normal size
+
+    def valence_to_hue(self, valence):
+        """Map emotional valence to color hue"""
+        # -1 (negative) → blue, 0 → white, +1 (positive) → red
+        return max(0, min(360, 180 + valence * 180))
+    
+    def should_shimmer(self, certainty, current_time):
+        """Determine if particle should shimmer in current frame"""
+        if certainty > 0.7:
+            return False
+        shimmer_rate = (1 - certainty) * 5  # More uncertain = faster shimmer
+        return (current_time * shimmer_rate) % 1 < 0.5
+
+    def render_particle(self):
+        current_time = dt.datetime.now().timestamp()
+        
+        # spatial + temporal base (3D + time)
+        pos_3d = self.position[:3]
+        age = current_time - self.position[3]
+
+        # emotional (2D -> visual representation)
+        freq = self.position[6]
+        valence = self.position[8]
+
+        # pseudo-quantum state
+        certainty = self.superposition['certain']
+
+        entanglements = []
+        for linked_id in self.linked_particles.get("children", []):
+            entanglements.append({
+                'target_id': linked_id,
+                "strength": self.calculate_connection_strength(linked_id),
+                "type": 'parent_child'
+            })
+
+        return {
+            'type': self.type,  # Include particle type for visualization
+            'position': pos_3d,
+            'size': self.age_to_size(age),
+            'pulse_rate': abs(freq),
+            'color_hue': self.valence_to_hue(valence),
+            'color_saturation': abs(freq),
+            'entanglements': entanglements,
+            'quantum_state': {
+                'opacity': certainty,
+                'animation': self.should_shimmer(certainty, current_time) and 'shimmer' or 'steady',
+                'ghost_trails': certainty < 0.5,
+                'collapse_indicator': self.collapsed_state is not None
+            }
+        }
+
+
+
 
 
 

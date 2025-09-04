@@ -10,9 +10,9 @@ from apis.api_registry import api
 import threading
 import time
 
-# Import screens at module level
-from tui.screens.home import HomeScreen
-from tui.screens.agent import AgentScreen
+# Import tabs at module level
+from tui.pages.home import HomeScreen
+from tui.pages.agent import AgentScreen
 
 class MainApp(App):
     CSS = """
@@ -36,6 +36,19 @@ class MainApp(App):
     
     #content-area {
         border: solid white;
+    }
+    
+    /* Todo Widget Styles */
+    #todo-tab {
+        height: 1fr;
+    }
+    
+    TabbedContent {
+        height: 1fr;
+    }
+    
+    TabPane {
+        height: 1fr;
     }
     
     .log-entry {
@@ -70,7 +83,7 @@ class MainApp(App):
     
     # Declare is_running as a reactive property
     is_running = reactive(True)
-    current_screen = reactive("home")
+    current_screen = reactive("home-page")
     
     def __init__(self):
         super().__init__()
@@ -79,6 +92,7 @@ class MainApp(App):
         self.update_timer = None
         self.last_log_count = 0
 
+
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
@@ -86,27 +100,22 @@ class MainApp(App):
             with Vertical(id="sidebar"):
                 yield Static("Navigation", classes="log-system")
                 yield Button("Home", id="nav-home", variant="primary")
-                yield Button("Agent Monitor", id="nav-agent", variant="default")
+                yield Button("Agent Monitor", id="nav-agent", variant="primary")
                 #yield Button("System Logs", id="nav-logs", variant="default")
                 yield Button("Exit", id="nav-exit", variant="error")
             
             # Content area where screens get mounted
             with Vertical(id="content-area"):
-                with ContentSwitcher(initial="home", id="content-switcher"):
-                    # Create content widgets (not screens) for the switcher
-                    with Vertical(id="home"):
-                        with TabbedContent():
-                            with TabPane("Messages", id="messages-tab"):
-                                yield Static("Messages", classes="message-system")
-                                yield RichLog(id="messages", highlight=True, markup=True)
-                            with TabPane("System Logs", id="system-logs-tab"):
-                                yield Static("System Logs - Complete History", classes="log-system")
-                                yield RichLog(id="system-logs", highlight=True, markup=True)
+                with ContentSwitcher(initial="home-page", id="content-switcher"):
                     
-                    # For now, create a placeholder for agent screen
-                    yield Static("🤖 Agent Monitor Coming Soon!\n\nThis will show:\n• Particle Field Visualization\n• Quantum State Monitor\n• Energy Flow Display", id="agent")
+                    with Vertical(id="home-page"):
+                        yield HomeScreen()
+
+                    with Vertical(id="agent-page"):
+                        yield AgentScreen()
         
         yield Footer()
+
 
     async def on_mount(self):
         # Start log monitoring
@@ -127,6 +136,7 @@ class MainApp(App):
         
         if self.logger:
             self.logger.log("TUI interface initialized", "SYSTEM", "tui_startup", "MainApp")
+
 
     def update_system_logs(self):
         """Update system logs display from shared logger"""
@@ -181,21 +191,27 @@ class MainApp(App):
             # Avoid infinite loop if logging fails
             pass
 
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "nav-home":
-            await self.switch_content("home")
+            await self.switch_content("home-page")
+
         elif event.button.id == "nav-agent":
-            await self.switch_content("agent")
-        elif event.button.id == "nav-logs":
-            # Switch to home and notify about logs tab
-            await self.switch_content("home")
-            self.notify("Switched to Home - check System Logs tab")
+            await self.switch_content("agent-page")
+            
         elif event.button.id == "nav-exit":
             if self.logger:
                 self.logger.log("TUI shutdown initiated by user", "SYSTEM", "tui_shutdown", "MainApp")
+            
+            try:
+                api.handle_shutdown()
+            except Exception as e:
+                if self.logger:
+                    self.logger.log(f"Cognitive shutdown error: {e}", "ERROR", "tui_shutdown", "MainApp")
+            
             self.is_running = False
             self.exit()
-    
+
     async def switch_content(self, content_id: str):
         """Switch the content area to show different content"""
         try:
@@ -211,10 +227,18 @@ class MainApp(App):
                 self.logger.log(f"Error switching content to {content_id}: {e}", "ERROR", "tui_navigation", "MainApp")
             self.notify(f"Error switching content: {e}")
 
+
     def on_unmount(self):
+        try:
+            api.handle_shutdown()
+        except Exception as e:
+            if self.logger:
+                self.logger.log(f"Error during shutting down Cognition Framework: {e}", "ERROR", "tui_shutdown", "MainApp")
+
         if self.logger:
             self.logger.log("TUI interface unmounted", "SYSTEM", "tui_shutdown", "MainApp")
         self.is_running = False
+
 
     # Future autonomous messaging methods
     def send_agent_message(self, message: str, message_type: str = "info", urgency: str = "normal"):

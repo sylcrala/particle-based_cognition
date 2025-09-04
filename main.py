@@ -13,7 +13,6 @@ from apis.api_registry import api
 import shared_services.logging
 import shared_services.config
 import shared_services.system_metrics
-import shared_services.system_events
 import apis.personal_tools.todo_list.todolist_api
 
 # Global log queue for TUI communication
@@ -21,7 +20,6 @@ logger = api.get_api("logger")
 
 def log_to_console(message, level="INFO", context = None):
     """Send log messages to both system logger and TUI console"""
-    import time
 
     if context != None:
         context = context
@@ -53,11 +51,6 @@ async def initialize_cognitive_systems():
         log_to_console(f"Configuration loaded for agent: {agent_config.get('name', 'Unknown')}", "SYSTEM")
     else:
         log_to_console("Configuration not available", "ERROR")
-    
-    # Register graceful shutdown handlers
-    api.register_shutdown_signal_handlers()
-    log_to_console("Shutdown signal handlers registered", "SYSTEM")
-    
 
     # Restore previous cognitive state if available
     log_to_console("Checking for previous cognitive state...", "SYSTEM")
@@ -90,56 +83,16 @@ async def initialize_cognitive_systems():
     
     return {"memory": memory_api, "field": field_api, "adaptive": adaptive_api, "events": event_handler}
 
-def run_tui():
-    """Run the TUI in a separate thread"""
-    try:
-        from tui.app import MainApp
-
-        # Create TUI app with logger access
-        app = MainApp()
-        app.run()
-        
-        
-    except Exception as e:
-        print(f"TUI Error: {e}")
-
 
 async def main():
     """Main orchestrator for cognitive system + TUI"""
-    try:
-        # Initialize system event handler (this will auto-register agent handler)
-        system_event_handler = api.get_api("system_event_handler")
-        if system_event_handler:
-            await system_event_handler.initialize()
-            log_to_console("System event handling initialized", "SYSTEM")
-        
-        # Start Cognitive Loop in separate thread
-        #cog_thread = threading.Thread(target=await initialize_cognitive_systems, daemon=True)
-        #cog_thread.start()
 
-        # Initialize cognitive systems
-        #cognition = await initialize_cognitive_systems()
+    logger.log(f"System startup initiated")
 
-        # Start TUI in separate thread
-        tui_thread = threading.Thread(target=run_tui, daemon=True)
-        tui_thread.start()
+    from tui.app import MainApp
+    await MainApp().run_async()
 
-        # Keep main thread alive and handle events
-        if system_event_handler:
-            # Wait for the master event loop to finish (shutdown will cancel it)
-            await system_event_handler.master_task
 
-    except KeyboardInterrupt:
-        log_to_console("Graceful shutdown initiated...", "SYSTEM")
-        # Use system event handler for coordinated shutdown
-        system_event_handler = api.get_api("system_event_handler")
-        if system_event_handler:
-            await system_event_handler.shutdown()
-        api.handle_shutdown()
-    except Exception as e:
-        log_to_console(f"Unexpected error: {e}", "ERROR")
-        log_to_console("Attempting graceful shutdown...", "SYSTEM")
-        api.handle_shutdown()
 
 if __name__ == "__main__":
     try:

@@ -96,11 +96,11 @@ class APIRegistry:
                         print("Emergency memory save completed")
             except:
                 print("Critical: Could not perform emergency save")
-    
+    """    
     def register_shutdown_signal_handlers(self):
-        """
-        Register system signal handlers for graceful shutdown on Ctrl+C, etc.
-        """
+        # **DISABLED** - conflicts with TUI signal handling (causes dirty shutdowns - hanging textual mouse tracking - etc)
+        # Register system signal handlers for graceful shutdown on Ctrl+C, etc.
+        
         import signal
         import sys
         
@@ -115,7 +115,7 @@ class APIRegistry:
             signal.signal(signal.SIGTERM, signal_handler)  # Termination request
         
         print("Shutdown signal handlers registered")
-    
+    """
     async def handle_startup_restoration(self):
         """
         Restore cognitive state from previous shutdown to maintain continuity
