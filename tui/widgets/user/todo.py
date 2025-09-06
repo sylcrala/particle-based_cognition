@@ -7,8 +7,11 @@ from apis.api_registry import api
 class TodoList(Vertical):
     CSS = """
     #content-switcher {
-        height: 100%;
-        width: 100%;
+        text-align: center;
+        color: cyan;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
     }
     #TodoList {
         height: 100%;
@@ -16,12 +19,12 @@ class TodoList(Vertical):
     }
     
     #todo-title {
+        height: 3;
         text-align: center;
         color: cyan;
-        margin-bottom: 1;
-        height: 3;
         border: solid white;
         padding: 1;
+        margin-bottom: 1;
     }
 
     #todo-container {
@@ -29,10 +32,12 @@ class TodoList(Vertical):
     }
 
     #task-viewer {
-        width: 80%;
-        border: solid blue;
+        height: 3;
+        text-align: center;
+        color: cyan;
+        border: solid white;
         padding: 1;
-        margin-right: 1;
+        margin-bottom: 1;
     }
     
     #task-management {
@@ -48,7 +53,7 @@ class TodoList(Vertical):
     
     #task-management-btn {
         margin-bottom: 1;
-        width: 100%;
+        width: 100%;.;
         max-width: 20;
     }
 

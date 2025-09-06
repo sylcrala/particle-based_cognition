@@ -1,13 +1,52 @@
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static, Button, TabbedContent, TabPane, RichLog
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, Grid
 
 from apis.api_registry import api
 
 from tui.widgets.user.todo import TodoList
 
 class HomeScreen(Vertical):
+    CSS = """
+    #home {
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+    Grid {
+        grid-size: 3 4;
+        gap: 1;
+        height: 100%;
+        width: 100%;
+    }
+    .hub-system {
+        height: 3;
+        text-align: center;
+        color: cyan;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
+    }
+    .message-system {
+        height: 3;
+        text-align: center;
+        color: cyan;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
+    }
+    .log-system {
+        height: 3;
+        text-align: center;
+        color: cyan;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
+    }
+    """   
+
+
     def __init__(self):
         super().__init__()
         self.title = "Quantum Cognitive System - Home"
@@ -17,6 +56,11 @@ class HomeScreen(Vertical):
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
+            with TabPane("Hub", id="hub-tab"):
+                yield Static("Hub", classes="hub-system")
+                #with Grid(id="hub-buttons"): # Hub content area - default landing area, 3-4 grid size, one "main" widget spanning 2 columns 3 rows in top lefthand corner
+                    #
+
             with TabPane("Messages", id="messages-tab"):
                 yield Static("Messages", classes="message-system")
                 yield RichLog(id="messages", highlight=True, markup=True)
