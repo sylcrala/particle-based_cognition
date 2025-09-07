@@ -16,66 +16,159 @@ from tui.pages.agent import AgentScreen
 
 class MainApp(App):
     CSS = """
-    #system-logs {
-        border: solid yellow;
-        height: 1fr;
+    /* Main Layout */
+    #content-area {
+        border: solid white;
+        height: 100%;
+        width: 100%;
     }
-    
-    #messages {
-        border: solid green;
-        height: 1fr;
+
+    #content-switcher {
+        height: 100%;
+        width: 100%;
     }
-    
+
+    #home-page {
+        height: 100%;
+        width: 100%;
+    }
+
+    #agent-page {
+        height: 100%;
+        width: 100%;
+    }
+
     #sidebar {
-        width: 30;
+        width: auto;
         border: solid blue;
         padding: 1;
         background: #1e1e1e;
         text-align: center;
     }
+
     
-    #content-area {
-        border: solid white;
+    /* Home Page Specific */
+
+    HomeScreen {
+        height: 100%;
+        width: 100%;
+        border: solid green;
+        background: #121212;
     }
-    
-    /* Todo Widget Styles */
-    #todo-tab {
+
+
+    /* Log and Message Areas */
+    #system-logs {
+        border: solid yellow;
         height: 1fr;
     }
-    
-    TabbedContent {
+
+    #messages {
+        border: solid green;
         height: 1fr;
     }
-    
-    TabPane {
-        height: 1fr;
+
+    /* Grid Layout */
+    Grid {
+        grid-size: 3 4;
+        height: 100%;
+        width: 100%;
     }
-    
+
+    /* Styling Classes */
     .log-entry {
         margin: 1;
     }
-    
+
     .log-system {
+        height: 3;
+        text-align: center;
         color: cyan;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
     }
-    
+
     .log-error {
         color: red;
     }
-    
+
     .log-success {
         color: green;
     }
-    
+
     .log-status {
         color: yellow;
     }
-    
+
     .message-system {
+        height: 3;
+        text-align: center;
         color: ansi_bright_green;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
+    }
+
+    .hub-system {
+        height: 3;
+        text-align: center;
+        color: cyan;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
+    }
+
+    /* TodoList Widget CSS */
+
+
+
+    #tasks-main-view {
+        height: 1fr;
+        border: thick white;
+        background: magenta;
+    }
+
+
+    #task-viewer {
+        height: 1fr; 
+        width: 100%;
+        border: solid white;
+        padding: 1;
+        margin-bottom: 1;
+    }
+
+    #task-viewer-buttons {
+        height: 3;
+        content-align: center middle;
+        margin-bottom: 1;
+    }
+
+    .task-viewer-btn {
+        margin: 0 1;
+        min-width: 15;
+    }
+
+    #task-list {
+        height: 1fr;
+        border: solid yellow;
+        padding: 1;
+    }
+
+    #task-management {
+        height: auto;
+        content-align: center middle;
+        border: solid green;
+        padding: 1;
+    }
+
+    .task-management-btn {
+        margin-bottom: 1;
+        width: 100%;
+        max-width: 20;
     }
     """
-    
+        
     SCREENS = {
         "home": HomeScreen,
         "agent": AgentScreen,

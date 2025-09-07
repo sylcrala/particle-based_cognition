@@ -84,20 +84,20 @@ async def initialize_cognitive_systems():
     return {"memory": memory_api, "field": field_api, "adaptive": adaptive_api, "events": event_handler}
 
 
-async def main():
+def main():
     """Main orchestrator for cognitive system + TUI"""
 
     logger.log(f"System startup initiated")
 
     from tui.app import MainApp
-    await MainApp().run_async()
+    MainApp().run()
 
 
 
 if __name__ == "__main__":
     try:
         # Run the main async function
-        asyncio.run(main())
+        main()
         
     except KeyboardInterrupt:
         print("\nQuantum Cognitive System shutdown complete")
