@@ -52,19 +52,20 @@ class MainApp(App):
     HomeScreen {
         height: 100%;
         width: 100%;
-        border: solid green;
+        border: solid pink;
         background: #121212;
     }
 
 
     /* Log and Message Areas */
-    #system-logs {
-        border: solid yellow;
+    #system-log-display {
+        border: solid pink;
         height: 1fr;
+        background: #1e1e1e;
     }
 
     #messages {
-        border: solid green;
+        border: solid pink;
         height: 1fr;
     }
 
@@ -84,7 +85,6 @@ class MainApp(App):
         height: 3;
         text-align: center;
         color: cyan;
-        border: solid white;
         padding: 1;
         margin-bottom: 1;
     }
@@ -104,31 +104,86 @@ class MainApp(App):
     .message-system {
         height: 3;
         text-align: center;
-        color: ansi_bright_green;
-        border: solid white;
+        color: cyan;
         padding: 1;
         margin-bottom: 1;
     }
+
+
+    /* Hub Tab CSS */
 
     .hub-system {
         height: 3;
         text-align: center;
         color: cyan;
-        border: solid white;
         padding: 1;
+        margin-bottom: 1;
+    }
+
+    .hub-content-area {
+        height: 1fr;
+        border: solid pink;
+        background: #1e1e1e;
+    }
+
+    .hub-panel-big {
+        column-span: 2;
+        row-span: 3;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .hub-panel-small {
+        column-span: 1;
+        row-span: 1;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .hub-panel-medium-wide {
+        column-span: 2;
+        row-span: 1;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .hub-panel-medium-tall {
+        column-span: 1;
+        row-span: 2;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .hub-panel-style {
+        border: solid green;
+        background: #2e2e2e;
+    }
+
+    .hub-panel-title {
+        text-align: center;
+        color: ansi_bright_cyan;
         margin-bottom: 1;
     }
 
     /* TodoList Widget CSS */
 
-
-
-    #tasks-main-view {
-        height: 1fr;
-        border: thick white;
-        background: magenta;
+    .todo-system {
+        height: 3;
+        text-align: center;
+        color: cyan;
+        padding: 1;
+        margin-bottom: 1;
     }
 
+    #tasks-content-area{
+        height: 1fr;
+        border: solid pink;
+        background: #1e1e1e;
+    }
 
     #task-viewer {
         height: 1fr; 
@@ -151,7 +206,7 @@ class MainApp(App):
 
     #task-list {
         height: 1fr;
-        border: solid yellow;
+        border: solid magenta;
         padding: 1;
     }
 

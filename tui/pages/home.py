@@ -1,8 +1,7 @@
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static, Button, TabbedContent, TabPane, RichLog
-from textual.containers import Vertical, Horizontal, Grid
-
+from textual.containers import Vertical, Horizontal, Grid, ScrollableContainer
 from apis.api_registry import api
 from tui.widgets.user.todo import TodoList
 from tui.widgets.system.log_widget import SystemLogWidget
@@ -19,15 +18,25 @@ class HomeScreen(Vertical):
     def compose(self) -> ComposeResult:
         with TabbedContent(id="home"):
             with TabPane("Hub", id="hub-tab"):
-                yield Static("Hub", classes="hub-system")
-                #with Grid(id="hub-buttons"): # Hub content area - default landing area, 3-4 grid size, one "main" widget spanning 2 columns 3 rows in top lefthand corner
-                    #
 
-            with TabPane("Messages", id="messages-tab"):
-                yield Static("Messages", classes="message-system")
-                yield RichLog(id="messages", highlight=True, markup=True)
+                yield Static("Hub", classes="hub-system")
+
+                with Grid(id="hub-buttons", classes="hub-content-area"): # Hub content area - default landing area, 3-4 grid size, one "main" widget spanning 2 columns 3 rows in top lefthand corner
+
+                    yield Static("panel1 - tbd", classes="hub-panel-big hub-panel-style")
+                    yield Static("panel2 - weather", classes="hub-panel-small hub-panel-style")
+                    yield Static("panel3 - quick actions", classes="hub-panel-small hub-panel-style")
+
+                    with ScrollableContainer(id="messages-container", classes="hub-panel-medium-tall hub-panel-style"): # messages panel 
+                        yield Static("Messages Stream", classes="hub-panel-title")
+                        yield RichLog(id="messages", highlight=True, markup=True)
+
+                    yield Static("panel5 - upcoming tasks", classes="hub-panel-small hub-panel-style")
+                    yield Static("panel6 - system metrics/status", classes="hub-panel-small hub-panel-style")
+
             with TabPane("System Logs", id="system-logs-tab"):
                 yield SystemLogWidget()
+
             with TabPane("To-Do List", id="todo-tab"):
                 yield TodoList()
 
