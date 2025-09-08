@@ -82,7 +82,7 @@ class MainApp(App):
     }
 
     .log-system {
-        height: 3;
+        max-height: 1;
         text-align: center;
         color: cyan;
         padding: 1;
@@ -102,7 +102,7 @@ class MainApp(App):
     }
 
     .message-system {
-        height: 3;
+        height: 1;
         text-align: center;
         color: cyan;
         padding: 1;
@@ -113,7 +113,7 @@ class MainApp(App):
     /* Hub Tab CSS */
 
     .hub-system {
-        height: 3;
+        height: 1;
         text-align: center;
         color: cyan;
         padding: 1;
@@ -169,10 +169,15 @@ class MainApp(App):
         margin-bottom: 1;
     }
 
+    #pending-tasks {
+        border: solid pink;
+        height: 1fr;
+    }
+
     /* TodoList Widget CSS */
 
     .todo-system {
-        height: 3;
+        height: 1;
         text-align: center;
         color: cyan;
         padding: 1;

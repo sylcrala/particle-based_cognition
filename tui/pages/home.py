@@ -19,19 +19,20 @@ class HomeScreen(Vertical):
         with TabbedContent(id="home"):
             with TabPane("Hub", id="hub-tab"):
 
-                yield Static("Hub", classes="hub-system")
-
                 with Grid(id="hub-buttons", classes="hub-content-area"): # Hub content area - default landing area, 3-4 grid size, one "main" widget spanning 2 columns 3 rows in top lefthand corner
 
                     yield Static("panel1 - tbd", classes="hub-panel-big hub-panel-style")
                     yield Static("panel2 - weather", classes="hub-panel-small hub-panel-style")
                     yield Static("panel3 - quick actions", classes="hub-panel-small hub-panel-style")
 
-                    with ScrollableContainer(id="messages-container", classes="hub-panel-medium-tall hub-panel-style"): # messages panel 
+                    with ScrollableContainer(id="messages-container", classes="hub-panel-medium-tall hub-panel-style"): # messages panel  - panel 4
                         yield Static("Messages Stream", classes="hub-panel-title")
                         yield RichLog(id="messages", highlight=True, markup=True)
 
-                    yield Static("panel5 - upcoming tasks", classes="hub-panel-small hub-panel-style")
+                    with ScrollableContainer(id="tasks-container", classes="hub-panel-small hub-panel-style"): # to-do panel - panel 5
+                        yield Static("Pending Tasks", classes="hub-panel-title")
+                        yield RichLog(id="pending-tasks", highlight=True, markup=True)
+
                     yield Static("panel6 - system metrics/status", classes="hub-panel-small hub-panel-style")
 
             with TabPane("System Logs", id="system-logs-tab"):
@@ -57,34 +58,22 @@ class HomeScreen(Vertical):
         except Exception as e:
             if self.logger:
                 self.logger.log(f"Error initializing home screen: {e}", "ERROR", "tui_home", "HomeScreen")
-    # Fixed debugging - safer approach
-        try:
-            tabbed_content = self.query_one(TabbedContent)
-            print(f"✅ TabbedContent widget found: {tabbed_content}")
-            self.logger.log("TabbedContent widget found", "SYSTEM", "tui_home", "HomeScreen")
 
-            # Check for TodoList widget more safely
-            try:
-                todo_widgets = self.query(TodoList)  # Use query() instead of query_one()
-                print(f"📝 TodoList widgets found: {len(todo_widgets)}")
-                self.logger.log(f"TodoList widgets found: {len(todo_widgets)}", "SYSTEM", "tui_home", "HomeScreen")
-                
-                if todo_widgets:
-                    todo_widget = todo_widgets[0]
-                    print(f"✅ First TodoList widget: {todo_widget}")
-                    self.logger.log("TodoList widget accessible", "SUCCESS", "tui_home", "HomeScreen")
+        try:
+            # query todo list api for pending tasks, add any found to the pending tasks panel
+            tasks_panel = self.query_one("#pending-tasks", RichLog)
+            todo_api = api.get_api("todo_list")
+            if todo_api:
+                incomplete_tasks = todo_api.get_incomplete_tasks()
+                if incomplete_tasks:
+                    for task in incomplete_tasks:
+                        tasks_panel.write(f"[yellow]• {task['task']}[/yellow]")
                 else:
-                    print("❌ No TodoList widgets found!")
-                    self.logger.log("No TodoList widgets found", "ERROR", "tui_home", "HomeScreen")
-                    
-            except Exception as todo_error:
-                print(f"❌ Error querying TodoList: {todo_error}")
-                self.logger.log(f"Error querying TodoList: {todo_error}", "ERROR", "tui_home", "HomeScreen")
-                
+                    tasks_panel.write("[dim]No pending tasks. Keep it up! :)[/dim]")
         except Exception as e:
-            print(f"❌ Error querying TabbedContent: {e}")
             if self.logger:
-                self.logger.log(f"Error querying TabbedContent: {e}", "ERROR", "tui_home", "HomeScreen")
+                self.logger.log(f"Error loading pending tasks: {e}", "ERROR", "tui_home", "HomeScreen")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "agent-btn":
             self.app.push_screen("agent")

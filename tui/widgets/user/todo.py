@@ -26,22 +26,19 @@ class TodoList(Vertical):
         with Vertical():
             with ContentSwitcher(initial="tasks-main-view", id="content-switcher-todolist"):
 
-                with Vertical(id="tasks-main-view"):
-                    yield Static("To-Do List", classes="todo-system")
+                with Vertical(id="tasks-main-view", classes="tasks-content-area"):
+                    with Horizontal(id="task-viewer-buttons"):
+                        yield Button("All", id="view-all-btn", classes="task-viewer-btn", variant="primary")
+                        yield Button("Pending", id="view-incomplete-btn", classes="task-viewer-btn", variant="default")
+                        yield Button("Done", id="view-completed-btn", classes="task-viewer-btn", variant="success")
 
-                    with Vertical(id="tasks-content-area"):
-                        with Horizontal(id="task-viewer-buttons"):
-                            yield Button("All", id="view-all-btn", classes="task-viewer-btn", variant="primary")
-                            yield Button("Pending", id="view-incomplete-btn", classes="task-viewer-btn", variant="default")
-                            yield Button("Done", id="view-completed-btn", classes="task-viewer-btn", variant="success")
+                    with Vertical(id="task-list"):
+                        yield self.TaskViewer(self.todo_list_api)
 
-                        with Vertical(id="task-list"):
-                            yield self.TaskViewer(self.todo_list_api)
-
-                        with Horizontal(id="task-management", classes="task-management"):
-                            yield Button("Add Task", id="add-task-btn", classes="task-management-btn", variant="primary")
-                            yield Button("Complete Task", id="complete-task-btn", classes="task-management-btn", variant="success")
-                            yield Button("Remove Task", id="remove-task-btn", classes="task-management-btn", variant="error")
+                    with Horizontal(id="task-management", classes="task-management"):
+                        yield Button("Add Task", id="add-task-btn", classes="task-management-btn", variant="primary")
+                        yield Button("Complete Task", id="complete-task-btn", classes="task-management-btn", variant="success")
+                        yield Button("Remove Task", id="remove-task-btn", classes="task-management-btn", variant="error")
 
                 with Vertical(id="new-task-popup"):
                     yield Static("What task would you like to add?")

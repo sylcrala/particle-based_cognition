@@ -20,6 +20,12 @@ class TodoList():
 
     def get_tasks(self):
         return self.tasks
+    
+    def get_incomplete_tasks(self):
+        return [task for task in self.tasks if not task.get("completed", False)]
+    
+    def get_completed_tasks(self):
+        return [task for task in self.tasks if task.get("completed", False)]
 
     def complete_task(self, task_id):
         for task in self.tasks:

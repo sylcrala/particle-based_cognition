@@ -15,7 +15,6 @@ class SystemLogWidget(Static):
         
     def compose(self):
         with Vertical():
-            yield Static("System Logs", classes="log-system")
             yield RichLog(id="system-log-display", highlight=True, markup=True)
     
     def on_mount(self):
