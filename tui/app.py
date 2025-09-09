@@ -248,8 +248,10 @@ class MainApp(App):
     }
 
     .agent-quick-actions {
+        height: 1fr;
+        width: 1fr;
+        padding: 1;
         content-align: center middle;
-
     }
 
     .agent-quick-action-btn {
@@ -259,13 +261,17 @@ class MainApp(App):
         height: 1fr;
     }
 
-    .agent-chat-window {
+    .agent-chat-section {
         height: 1fr;
         width: 4fr;
         border: solid pink;
         background: #1e1e1e;
         padding: 1;
-        margin-right: 1;
+    }
+
+    .agent-chat-input {
+        height: 3;
+        text-align: left;
     }
 
     .agent-comms-controls-title {

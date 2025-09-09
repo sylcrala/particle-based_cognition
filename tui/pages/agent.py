@@ -1,5 +1,5 @@
 from textual.app import ComposeResult
-from textual.widgets import Static, Button, TabbedContent, TabPane, RichLog
+from textual.widgets import Static, Button, TabbedContent, TabPane, RichLog, Input
 from textual.containers import Horizontal, Vertical, Grid, ScrollableContainer, Container
 
 from tui.widgets.system.log_widget import SystemLogWidget
@@ -51,13 +51,15 @@ class AgentScreen(Vertical):
                         yield Static("Agent Communications Panel - tbd", id="agent-communications")
                         # implement agent communications here - chat window, message history, etc
                         with Horizontal():
-
-                            with ScrollableContainer(id = "agent-chat-window", classes="agent-chat-window"):
-                                yield Static("Chat Window - tbd", classes="agent-chat-style")
-                                yield RichLog(id="agent-chat-log", highlight=True, markup=True)
+                            with Vertical(id="agent-chat-section", classes="agent-chat-section"):
+                                yield Static("Chat Window - tbd", classes="agent-panel-title")
+                                with ScrollableContainer(id = "agent-chat-window", classes="agent-chat-window"):
+                                    yield RichLog(id="agent-chat-log", highlight=True, markup=True)
+                                    yield Input(id="agent-chat-input", placeholder="Type your message here...", classes="agent-chat-input")
+                                
 
                             with Container(id="agent-comms-controls", classes="agent-comms-controls"):
-                                yield Static("Controls - tbd", classes="agent-comms-controls-title")
+                                yield Static("Controls - tbd", classes="agent-panel-title")
                                 # controls for sending messages, managing conversations, etc.
                                 yield Button("View Chat History", id="view-history-btn", classes="agent-comms-btn", variant="default")
                                 yield Button("Settings", id="comms-settings-btn", classes="agent-comms-btn", variant="default")
