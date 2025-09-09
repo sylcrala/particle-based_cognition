@@ -17,15 +17,21 @@ from tui.pages.agent import AgentScreen
 class MainApp(App):
     CSS = """
     /* Main Layout */
-    #content-area {
+    #app-content-area {
         border: solid white;
-        height: 100%;
-        width: 100%;
+        height: 1fr;
+        width: 1fr;
+        padding: 1;
     }
 
     #content-switcher {
         height: 100%;
         width: 100%;
+    }
+
+    .righthand-padding {
+        min-width: 1;
+        height: 100%;
     }
 
     #home-page {
@@ -46,7 +52,7 @@ class MainApp(App):
         text-align: center;
     }
 
-    
+
     /* Home Page Specific */
 
     HomeScreen {
@@ -55,7 +61,6 @@ class MainApp(App):
         border: solid pink;
         background: #121212;
     }
-
 
     /* Log and Message Areas */
     #system-log-display {
@@ -69,12 +74,6 @@ class MainApp(App):
         height: 1fr;
     }
 
-    /* Grid Layout */
-    Grid {
-        grid-size: 3 4;
-        height: 100%;
-        width: 100%;
-    }
 
     /* Styling Classes */
     .log-entry {
@@ -121,9 +120,17 @@ class MainApp(App):
     }
 
     .hub-content-area {
-        height: 1fr;
+        height: 100%;
+        width: 100%;
         border: solid pink;
         background: #1e1e1e;
+    }
+
+    .hub-grid {
+        grid-size: 3 4;
+        height: 1fr;
+        width: 1fr;
+        border: solid cyan;
     }
 
     .hub-panel-big {
@@ -172,6 +179,116 @@ class MainApp(App):
     #pending-tasks {
         border: solid pink;
         height: 1fr;
+    }
+
+
+    /* Agent Tab CSS */
+    .agent-system {
+        height: 1;
+        text-align: center;
+        color: cyan;
+        padding: 1;
+        margin-bottom: 1;
+    }
+
+    .agent-content-area {
+        height: 1fr;
+        border: solid pink;
+        background: #1e1e1e;
+    }
+
+    .agent-grid {
+        grid-size: 3 4;
+        height: 1fr;
+        width: 1fr;
+        border: solid cyan;
+    }
+
+    .agent-panel-big {
+        column-span: 2;
+        row-span: 3;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .agent-panel-small {
+        column-span: 1;
+        row-span: 1;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .agent-panel-medium-wide {
+        column-span: 2;
+        row-span: 1;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .agent-panel-medium-tall {
+        column-span: 1;
+        row-span: 2;
+        height: 100%;
+        width: 100%;
+        padding: 1;
+    }
+
+    .agent-panel-style {
+        border: solid green;
+        background: #2e2e2e;
+    }
+
+    .agent-panel-title {
+        text-align: center;
+        color: ansi_bright_cyan;
+        margin-bottom: 1;
+    }
+
+    .agent-quick-actions {
+        content-align: center middle;
+
+    }
+
+    .agent-quick-action-btn {
+        padding: 1;
+        margin: 0 1;
+        width: 1fr;
+        height: 1fr;
+    }
+
+    .agent-chat-window {
+        height: 1fr;
+        width: 4fr;
+        border: solid pink;
+        background: #1e1e1e;
+        padding: 1;
+        margin-right: 1;
+    }
+
+    .agent-comms-controls-title {
+        height: 3;
+        text-align: center;
+        color: cyan;
+        padding: 1;
+    }
+        
+    .agent-comms-controls {
+        height: 1fr;
+        width: 1fr;
+        border: solid cyan;
+        padding: 1;
+        background: #1e1e1e;
+        content-align: center middle;
+        text-align: center;
+    }
+
+    .agent-comms-btn {
+        margin-bottom: 1;
+        padding: 1;
+        content-align: center middle;
     }
 
     /* TodoList Widget CSS */
@@ -258,7 +375,7 @@ class MainApp(App):
                 yield Button("Exit", id="nav-exit", variant="error")
             
             # Content area where screens get mounted
-            with Vertical(id="content-area"):
+            with Vertical(id="app-content-area"):
                 with ContentSwitcher(initial="home-page", id="content-switcher"):
                     
                     with Vertical(id="home-page"):
@@ -266,6 +383,8 @@ class MainApp(App):
 
                     with Vertical(id="agent-page"):
                         yield AgentScreen()
+
+            #yield Static(classes="righthand-padding")  # Right-hand padding
         
         yield Footer()
 

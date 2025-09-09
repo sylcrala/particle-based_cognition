@@ -7,7 +7,7 @@ from apis.api_registry import api
 
 class FieldVisualizerWidget(Static):
     def __init__(self):
-        super().__init__("Particle Field - Initializing...")
+        super().__init__("Particle Field - Status: Offline")
         self.field_api = api.get_api("particle_field")
         # proposed visualization:
         # x, y, z - Spatial

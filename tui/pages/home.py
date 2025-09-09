@@ -16,14 +16,14 @@ class HomeScreen(Vertical):
         
 
     def compose(self) -> ComposeResult:
-        with TabbedContent(id="home"):
+        with TabbedContent(id="home", initial="hub-tab"):
             with TabPane("Hub", id="hub-tab"):
 
-                with Grid(id="hub-buttons", classes="hub-content-area"): # Hub content area - default landing area, 3-4 grid size, one "main" widget spanning 2 columns 3 rows in top lefthand corner
+                with Grid(id="hub-buttons", classes="hub-content-area hub-grid"): # Hub content area - default landing area, 3-4 grid size, one "main" widget spanning 2 columns 3 rows in top lefthand corner
 
                     yield Static("panel1 - tbd", classes="hub-panel-big hub-panel-style")
                     yield Static("panel2 - weather", classes="hub-panel-small hub-panel-style")
-                    yield Static("panel3 - quick actions", classes="hub-panel-small hub-panel-style")
+                    yield Static("panel3 - system metrics/status", classes="hub-panel-small hub-panel-style")
 
                     with ScrollableContainer(id="messages-container", classes="hub-panel-medium-tall hub-panel-style"): # messages panel  - panel 4
                         yield Static("Messages Stream", classes="hub-panel-title")
@@ -33,7 +33,7 @@ class HomeScreen(Vertical):
                         yield Static("Pending Tasks", classes="hub-panel-title")
                         yield RichLog(id="pending-tasks", highlight=True, markup=True)
 
-                    yield Static("panel6 - system metrics/status", classes="hub-panel-small hub-panel-style")
+                    yield Static("panel6 - quick actions", classes="hub-panel-small hub-panel-style")
 
             with TabPane("System Logs", id="system-logs-tab"):
                 yield SystemLogWidget()
