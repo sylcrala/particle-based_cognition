@@ -32,3 +32,4 @@ def get_base_metric(self, name):
     elif name == "manhattan":
         return lambda a, b: sum(abs(x - y) for x, y in zip(a, b))
     return lambda a, b: 1  # fallback constant distance
+

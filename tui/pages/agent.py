@@ -13,13 +13,21 @@ class AgentScreen(Vertical):
     def __init__(self):
         super().__init__()
         self.title = "Agent Dashboard"
+        self.agent = api.get_api("cognition_loop")
+        self.agent_voice = api.get_api("meta_voice")
         self.id = "agent"
+        self.status_text = "Unknown"
+        self.cycle_count = 0
+        self.is_online = False
+        
 
         self.logger = api.get_api("logger")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="agent-content-area"):
             with TabbedContent(initial="agent-home", id="agent-tabs"):
+
+
                 with TabPane("Overview", id="agent-home"):
                     with Grid(classes="agent-grid"):
 
@@ -46,6 +54,7 @@ class AgentScreen(Vertical):
 
                         yield Static("Panel 6 - tbd", classes="agent-panel-small agent-panel-style") # tbd / panel 6
                     
+
                 with TabPane("Communications", id="agent-comms"):
                     with Vertical():
                         yield Static("Agent Communications Panel - tbd", id="agent-communications")
@@ -78,13 +87,18 @@ class AgentScreen(Vertical):
                         # debugging tools here - interactive console, variable inspection, step through processes, etc.
                         # trigger a separate screen or popup for this                
             
-            #with Static(id="agent-status-footer"):
-                # add dynamic agent status info here in future (maybe make this application wide?)
 
+            with Container(id="agent-status-footer"):
+                # Add dynamic agent status info here
+                with Horizontal():
+                    yield Static(f"Agent Status - {self.status_text}", id="agent-status-online")
+                    yield Static(f"Cycle Count: {self.cycle_count}", id="agent-status-cycle-count")
 
     async def on_mount(self):
         """Initialize the agent screen with data monitoring"""
+
         try:
+            # Initial log update
             SystemLogWidget.update_logs(self)
             pass
             
@@ -93,7 +107,54 @@ class AgentScreen(Vertical):
                 self.logger.log(f"Error initializing agent screen: {e}", "ERROR", "tui_agent", "AgentScreen")
             pass
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+
+        try:
+            # initial agent status check
+            status = await self.agent.get_status()
+            
+            self.is_online = status.get("is_online", False)
+            self.cycle_count = status.get("cycle_count", 0)
+
+            self.status_text = "Online" if self.is_online else "Offline"
+
+            pass
+
+        except Exception as e:
+            if self.logger:
+                self.logger.log(f"Error fetching agent status: {e}", "ERROR", "tui_agent", "AgentScreen")
+            self.status_text = "Unknown"
+            self.cycle_count = 0
+            pass
+
+        try:
+            # update chat log
+            chat_log = self.query_one("agent-chat-log", RichLog)
+            chat_log.update(self.agent.chat_history)
+
+        except Exception as e:
+            if self.logger:
+                self.logger.log(f"Error updating chat log: {e}", "ERROR", "tui_agent", "AgentScreen")
+            pass
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "pause-btn":
             # Future: toggle update timer
             pass
+
+        if event.key == "enter" and event.button.id == "agent-chat-input":
+            chat_log = self.query_one("agent-chat-log", RichLog)
+            message = self.query_one("#agent-chat-input", Input).value
+            chat_log.update(message)
+
+            try:
+                response = await self.agent_voice.generate(message, source="user")
+            except Exception as e:
+                if self.logger:
+                    self.logger.log(f"Error generating agent response: {e}", "ERROR", "tui_agent", "AgentScreen")
+                response = "Error generating response."
+            
+            chat_log.update(response)
+            self.query_one("#agent-chat-input", Input).value = ""
+
+            pass
+

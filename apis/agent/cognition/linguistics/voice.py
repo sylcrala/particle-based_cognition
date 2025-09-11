@@ -4,6 +4,7 @@ handles agent "voice" generation (text, other modes not yet implemented) - uses 
 import uuid
 import random
 from time import time
+import numpy as np
 
 from apis.api_registry import api
 
@@ -14,6 +15,10 @@ EXTERNAL_SOURCE = "external_dialogue"
 class MetaVoice:
     def __init__(self):
         self.logger = api.get_api("logger")
+        self.model_handler = api.get_api("model_handler")
+        self.field_api = api.get_api("particle_field")
+        self.memory_bank = api.get_api("memory_bank")
+        self.lexicon_store = api.get_api("lexicon_store")
 
     def log(self, message):
         self.logger.log(message, "INFO", "MetaVoice", "MetaVoice")
@@ -22,9 +27,9 @@ class MetaVoice:
         """Generate response using model handler and quantum-aware particle context"""
         
         # Get model handler from API
-        model_handler = api.get_api("model_handler")
-        field_api = api.get_api("particle_field")
-        
+        model_handler = self.model_handler
+        field_api = self.field_api
+
         if not model_handler:
             return "[Error: Model handler not available]"
             
@@ -70,7 +75,8 @@ class MetaVoice:
 
             mem_entry = {
                 "input": prompt,
-                "response": response
+                "response": response,
+                "context": quantum_context
             }
 
             api.call_api("memory_bank", "update", ("conversation", mem_entry, [input_particle.id, response_particle.id], "voice generation"))
@@ -102,7 +108,13 @@ class MetaVoice:
                 base_score *= (1.0 + linkage_count * 0.1)
                 
             # Distance/relevance (existing logic)
-            # ... add your existing distance calculation here
+            if hasattr(particle, 'get_embedding') and particle.get_embedding():
+                input_embedding = api.call_api("model_handler", "embed_text", (input_text,))
+                particle_embedding = particle.get_embedding()
+                if input_embedding and particle_embedding:
+                    distance = np.linalg.norm(np.array(input_embedding) - np.array(particle_embedding))
+                    relevance_score = 1 / (1 + distance)  # Closer means more relevant
+                    base_score *= relevance_score            
             
             scored_particles.append((base_score, particle))
             

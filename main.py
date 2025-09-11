@@ -4,8 +4,11 @@ Main entry point for Quantum Cognitive System with integrated TUI console
 """
 
 import asyncio
+import os
 import sys
+import subprocess
 import threading
+from pathlib import Path
 from queue import Queue
 from apis.api_registry import api
 
@@ -84,13 +87,27 @@ async def initialize_cognitive_systems():
     return {"memory": memory_api, "field": field_api, "adaptive": adaptive_api, "events": event_handler}
 
 
+#def launch_tui_dedicated_terminal(): tbd
+
+
 def main():
     """Main orchestrator for cognitive system + TUI"""
 
-    logger.log(f"System startup initiated")
+    logger.log(f"System startup initializing...", "INFO", "Main", "main")
 
     from tui.app import MainApp
     MainApp().run()
+
+    logger.log(f"TUI startup complete, initializing cognitive systems...", "INFO", "Main", "main")
+
+    # Start cognitive systems initialization asynchronously
+    try:
+        asyncio.run(initialize_cognitive_systems())
+    except Exception as e:
+        logger.log(f"Error during cognitive systems initialization: {e}", "ERROR", "Main", "main")
+
+    logger.log(f"System is fully online", "SUCCESS", "Main", "main")
+    
 
 
 

@@ -54,6 +54,14 @@ class CognitionLoop:
 
         api.call_api("logger", "log", (message, level, context, source))
 
+
+    async def get_status(self):
+        status = {
+            "is_online": self.conscious_active,
+            "cycle_count": self.subconscious_cycle_count
+        }
+        return status
+
     async def initialize_cognitive_systems(self):
         """Initialize all cognitive systems and seed particles"""
         try:
