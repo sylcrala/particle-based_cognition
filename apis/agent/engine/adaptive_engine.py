@@ -8,6 +8,7 @@ from datetime import datetime as dt
 from multiprocessing import context
 import random
 import numpy as np
+from apis.agent.cognition.particles.lingual_particle import LingualParticle
 
 from apis.api_registry import api
 
@@ -28,6 +29,7 @@ class AdaptiveDistanceEngine:
         self.memory = {}  # (id_a, id_b): interaction_score
         self.embeddings = {}  # id: xp.array (cupy or numpy)
 
+
         from apis.agent.utils.policies import strategies
         self.strategies = strategies
         self.policies = {}  # id: lambda function or string-based strategy
@@ -36,11 +38,12 @@ class AdaptiveDistanceEngine:
     def tokenizer(self):
         """Lazy-load tokenizer when needed"""
         if self._tokenizer is None:
-            model_handler = api.get_api("model_handler")
+            model_handler = api.get_api("_agent_model_handler")
             if model_handler and hasattr(model_handler, 'tokenizer'):
                 self._tokenizer = model_handler.tokenizer
             else:
                 # Fallback or warning
+                print("[Adaptive Engine - tokenizer()] Model handler tokenizer not available")
                 self.log("Model handler tokenizer not available", "WARNING", "tokenizer property")
         return self._tokenizer
         
@@ -173,18 +176,14 @@ class AdaptiveDistanceEngine:
         #from models.persistent_identity_kit.cognitive.particle_engine import batch_hyper_distance_matrix
 
         # Convert the input text to a temporary particle for comparison
-        from apis.agent.cognition.particles.utils.particle_frame import Particle
-        temp_lp = Particle(
-            type="lingual",
-            metadata={
-                "token": text,
-                "content": text,
-                "source": "meta_compare",
-                "temporary": True
-            },
-            energy=0.1,
-            activation=0.1
+        temp_lp = LingualParticle(
+            token=text,
+            content=text,
+            source="meta_compare",
+            temporary=True
         )
+        temp_lp.energy = 0.1
+        temp_lp.activation = 0.1
 
         if not hasattr(temp_lp, "position") or not isinstance(particle.position, np.ndarray):
             self.log(f"Invalid positions: {temp_lp.position}, {particle.position}", level="ERROR", context="compare_text_to_particle()")
@@ -209,7 +208,7 @@ class AdaptiveDistanceEngine:
             learning_state = {
                 "timestamp": dt.now().isoformat(),
                 "total_embeddings": len(self.embeddings),
-                "total_interactions": len(self.interaction_history),
+                "total_interactions": len(self.memory),
                 "active_policies": len(set(self.policies.values())),
                 "policy_distribution": {}
             }
@@ -219,8 +218,8 @@ class AdaptiveDistanceEngine:
                 learning_state["policy_distribution"][policy] = learning_state["policy_distribution"].get(policy, 0) + 1
             
             # Save interaction statistics
-            if self.interaction_history:
-                recent_interactions = list(self.interaction_history)[-100:]  # Last 100 interactions
+            if self.memory:
+                recent_interactions = list(self.memory)[-100:]  # Last 100 interactions
                 learning_state["recent_interaction_sample"] = len(recent_interactions)
             
             # Save to file
@@ -269,6 +268,4 @@ class AdaptiveDistanceEngine:
             self.log(f"Error restoring learning state: {e}", level="ERROR", context="restore_learning_state")
             return False
 
-# Register the API
-api.register_api("adaptive_engine", AdaptiveDistanceEngine())
 

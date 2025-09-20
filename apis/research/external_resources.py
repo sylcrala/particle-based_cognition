@@ -36,8 +36,19 @@ class ExternalResources:
         """Get definition from spaCy if available"""
         if not self.spacy_available:
             return None
-        # TODO: Implement spaCy definition lookup
-        return None
+        
+        try:
+            nlp = spacy.load("en_core_web_sm")
+            doc = nlp(term)
+            if doc and doc[0].has_vector:
+                term_def = f"{term}: {doc[0].text} (vector length: {len(doc[0].vector)})"
+                return term_def
+            else:
+                return "No definition found / no vector available"
+        except Exception as e:
+            self.log(f"Error getting spaCy definition for {term}: {e}", "ERROR")
+            return None
+        
 
     async def get_external_definitions(self, term):
         term_cleaned = re.sub(r"^[_#]+", "", term)
@@ -119,4 +130,4 @@ class ExternalResources:
             self.log("No synonym pairs merged.")
 
 # Register the API (but mark as experimental)
-# api.register_api("external_resources", ExternalResources())
+api.register_api("external_resources", ExternalResources())

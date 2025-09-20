@@ -7,21 +7,22 @@ from tui.widgets.agent.particle_field import FieldVisualizerWidget
 from tui.widgets.agent.quantum_state import QuantumStateWidget
 from tui.widgets.agent.energy_flow import EnergyFlowWidget
 
+import time
+
 from apis.api_registry import api
 
 class AgentScreen(Vertical):
     def __init__(self):
         super().__init__()
         self.title = "Agent Dashboard"
-        self.agent = api.get_api("cognition_loop")
-        self.agent_voice = api.get_api("meta_voice")
         self.id = "agent"
         self.status_text = "Unknown"
         self.cycle_count = 0
         self.is_online = False
-        
-
         self.logger = api.get_api("logger")
+
+        self.agent = api.get_api("agent")
+        
 
     def compose(self) -> ComposeResult:
         with Vertical(id="agent-content-area"):
@@ -64,8 +65,9 @@ class AgentScreen(Vertical):
                                 yield Static("Chat Window - tbd", classes="agent-panel-title")
                                 with ScrollableContainer(id = "agent-chat-window", classes="agent-chat-window"):
                                     yield RichLog(id="agent-chat-log", highlight=True, markup=True)
-                                    yield Input(id="agent-chat-input", placeholder="Type your message here...", classes="agent-chat-input")
-                                
+                                    with Horizontal(classes="agent-chat-input-area"):
+                                        yield Input(id="agent-chat-input", placeholder="Type your message here...", classes="agent-chat-input")
+                                        yield Button("Send", id="agent-chat-send", classes="agent-chat-send-btn", variant="primary")                             
 
                             with Container(id="agent-comms-controls", classes="agent-comms-controls"):
                                 yield Static("Controls - tbd", classes="agent-panel-title")
@@ -96,65 +98,84 @@ class AgentScreen(Vertical):
 
     async def on_mount(self):
         """Initialize the agent screen with data monitoring"""
+        await self.refresh_agent_data()
+
+    async def refresh_agent_data(self):
+        try:
+            log_widget = self.query_one(SystemLogWidget)
+            await log_widget.refresh_logs()
+        except Exception as e:
+            self.logger.log(f"Error refreshing log widget: {e}", "ERROR", "tui_agent", "AgentScreen")
 
         try:
-            # Initial log update
-            SystemLogWidget.update_logs(self)
-            pass
-            
+            # Fetch latest data from the agent
+            if self.agent and self.agent.cognition_loop:
+                self.is_online = self.agent.cognition_loop.conscious_active
+                self.status_text = "Online" if self.is_online else "Offline"
+                self.cycle_count = self.agent.cognition_loop.cycle_count
+
+                # Update status footer
+                status_widget = self.query_one("#agent-status-online", Static)
+                cycle_widget = self.query_one("#agent-status-cycle-count", Static)
+                status_widget.update(f"Agent Status - {self.status_text}")
+                cycle_widget.update(f"Cycle Count: {self.cycle_count}")
         except Exception as e:
             if self.logger:
-                self.logger.log(f"Error initializing agent screen: {e}", "ERROR", "tui_agent", "AgentScreen")
-            pass
-
+                self.logger.log(f"Error refreshing agent status: {e}", "ERROR", "tui_agent", "AgentScreen")
 
         try:
-            # initial agent status check
-            status = await self.agent.get_status()
-            
-            self.is_online = status.get("is_online", False)
-            self.cycle_count = status.get("cycle_count", 0)
-
-            self.status_text = "Online" if self.is_online else "Offline"
-
-            pass
-
+            field_widget = self.query_one(FieldVisualizerWidget)
+            await field_widget.refresh_field()
         except Exception as e:
-            if self.logger:
-                self.logger.log(f"Error fetching agent status: {e}", "ERROR", "tui_agent", "AgentScreen")
-            self.status_text = "Unknown"
-            self.cycle_count = 0
-            pass
+            self.logger.log(f"Error updating field widget: {e}", "ERROR", "tui_agent", "AgentScreen")
 
         try:
-            # update chat log
-            chat_log = self.query_one("agent-chat-log", RichLog)
-            chat_log.update(self.agent.chat_history)
+            chat_widget = self.query_one("#agent-chat-log", RichLog)
+            if chat_widget:
+                chat_log = self.agent.meta_voice.get_chat_history()
+                tony_msgs = chat_log.get("Tony", [])
+                misty_msgs = chat_log.get("Misty", [])
 
+                chat_widget.write("[bold underline]Chat History:[/bold underline]")
+                for t_msg, m_msg in zip(tony_msgs, misty_msgs):
+                    chat_widget.write(f"[bold pink]Tony:[/bold pink] {t_msg}")
+                    chat_widget.write(f"[bold blue]Misty:[/bold blue] {m_msg}")
+
+                await chat_widget.scroll_end(animate=False)
         except Exception as e:
-            if self.logger:
-                self.logger.log(f"Error updating chat log: {e}", "ERROR", "tui_agent", "AgentScreen")
-            pass
+            self.logger.log(f"Error updating chat widget: {e}", "ERROR", "tui_agent", "AgentScreen")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "pause-btn":
-            # Future: toggle update timer
-            pass
 
-        if event.key == "enter" and event.button.id == "agent-chat-input":
-            chat_log = self.query_one("agent-chat-log", RichLog)
-            message = self.query_one("#agent-chat-input", Input).value
-            chat_log.update(message)
+        if event.button.id == "agent-chat-send":
+            input_widget = self.query_one("#agent-chat-input", Input)
+            message = input_widget.value
+            message_length = len(message.strip())
+
+            if message_length == 0:
+                return # skipping empty messages
+
+
+            self.query_one("#agent-chat-log", RichLog).write(f"[bold pink]You:[/bold pink] {message}")
+            input_widget.value = ""
 
             try:
-                response = await self.agent_voice.generate(message, source="user")
+                if message_length == 0:
+                    return  # Ignore empty messages
+                else:
+
+                    response = await self.agent.event_handler.emit_event("user_input", message, "interface_chat")
+                    if response:
+                        self.query_one("#agent-chat-log", RichLog).write(f"[bold blue]Misty:[/bold blue] {response}")
+                    else:
+                        self.query_one("#agent-chat-log", RichLog).write(f"[bold red]System:[/bold red] [Error: No response]")
+
+
             except Exception as e:
                 if self.logger:
                     self.logger.log(f"Error generating agent response: {e}", "ERROR", "tui_agent", "AgentScreen")
-                response = "Error generating response."
-            
-            chat_log.update(response)
-            self.query_one("#agent-chat-input", Input).value = ""
+                    self.query_one("#agent-chat-log", RichLog).write(f"[bold red]Error:[/bold red] Failed to get response from agent: {e}")
+
 
             pass
 

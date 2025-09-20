@@ -9,10 +9,17 @@ import random
 import numpy as np
 import datetime as dt
 from time import time
+import asyncio
 from collections import deque
+import threading
+from apis.agent.cognition.particles.memory_particle import MemoryParticle
 from apis.api_registry import api
 from apis.agent.utils.distance import batch_hyper_distance_matrix
-from apis.agent.cognition.particles.utils.particle_frame import category_to_identity_code
+from apis.agent.cognition.particles.utils.particle_frame import category_to_identity_code, Particle
+from apis.agent.cognition.particles.lingual_particle import LingualParticle
+from apis.agent.cognition.particles.memory_particle import MemoryParticle
+
+
 
 MAX_PARTICLE_COUNT = 150
 
@@ -20,15 +27,16 @@ class ParticleField:
     """
     the spatial domain for particle storage and lifecycle
     """
-    def __init__(self):
-        self.memory_bank = api.get_api("memory_bank")
-        self.adaptive_engine = api.get_api("adaptive_engine")
-        self.particle_engine = api.get_api("particle_engine")
-        # Event system integrated with API architecture
-        
-        # Particle management
+    def __init__(self, memory_bank = None, adaptive_engine = None, event_handler = None, voice = None):
+        self.memory_bank = memory_bank
+        self.adaptive_engine = adaptive_engine
+        self.event_handler = event_handler
+        self.voice = voice
+
+        self._update_active = True
+
         self.particles = []             # all particles in the field
-        self.alive_particles = set()    # alive/dead filtering1
+        self.alive_particles = set()    # alive/dead filtering
         self.particle_index = {}        # spatial partitioning for neighbor queries
         self.type_index = {}            # O(1) filtering
         self.collapse_history = {}      # wavelength collapse history 
@@ -37,6 +45,7 @@ class ParticleField:
         
         # Spatial indexing for O(log n) neighbor queries
         self.grid_size = 0.5  # Grid cell size for spatial partitioning
+        self._grid_lock = threading.Lock()
         self.spatial_grid = {}  # grid_key -> [particle_ids]
         self.particle_grid_cache = {}  # particle_id -> grid_key
 
@@ -94,91 +103,90 @@ class ParticleField:
     def extract_state_vector(self):
         """Extract average state vector from all particles"""
         if not self.particles:
-            return [0.0] * 11
-        avg = [sum(p.position[i] for p in self.particles) / len(self.particles) for i in range(11)]
+            return [0.0] * 12
+        avg = [sum(p.position[i] for p in self.particles) / len(self.particles) for i in range(12)]
         return avg
     
 
-    async def spawn_particle(self, id, type, metadata, energy=0.1, activation=0.1, AE_policy=None, tokenizer=None, emit_event = True, source_particle_id=None, **kwargs):
+    async def spawn_particle(self, id = None, type = None, metadata = None, energy=0.1, activation=0.1, AE_policy=None, emit_event = True, source_particle_id=None, **kwargs):
         """
         Spawn a new particle with proper linkage tracking for cognitive mapping
         """
-        # Check particle limit first
-        if len(self.particles) >= MAX_PARTICLE_COUNT:
-            self.log(f"Skipping particle generation due to particle limit - starting prune checks", level="DEBUG", context="spawn_particle()")
-            await self.prune_low_value_particles()
+
+
+
+        try:
+            # Check particle limit first
             if len(self.particles) >= MAX_PARTICLE_COUNT:
-                self.log(f"Still over particle limit ({len(self.particles)}), aborting spawn.", level="WARNING", context="spawn_particle()")
-                return None
-        
-        # Import particle types dynamically to avoid circular imports
-        if type == "memory":
-            from apis.agent.cognition.particles.memory_particle import MemoryParticle
-            particle = MemoryParticle(
-                id=id, metadata=metadata, energy=energy, 
-                activation=activation, AE_policy=AE_policy, **kwargs
-            )
-        elif type == "lingual":
-            from apis.agent.cognition.particles.lingual_particle import LingualParticle
-            particle = LingualParticle(
-                id=id, metadata=metadata, energy=energy,
-                activation=activation, AE_policy=AE_policy, **kwargs
-            )
-        else:
-            from apis.agent.cognition.particles.utils.particle_frame import Particle
-            particle = Particle(
-                id=id, type=type, metadata=metadata, energy=energy,
-                activation=activation, AE_policy=AE_policy, **kwargs
-            )
-        
-        # Track particle linkage for cognitive mapping
-        if source_particle_id:
-            particle.linked_particles = {"source": source_particle_id}
-            # Also update the source particle to know about this child
-            source_particle = self.get_particle_by_id(source_particle_id)
-            if source_particle:
-                if not hasattr(source_particle, 'linked_particles'):
-                    source_particle.linked_particles = {}
-                if 'children' not in source_particle.linked_particles:
-                    source_particle.linked_particles['children'] = []
-                source_particle.linked_particles['children'].append(particle.id)
-        else:
-            particle.linked_particles = {}
-        
-        # Add to field
-        self.particles.append(particle)
-        
-        # Add creation index for energy cost calculations
-        particle.creation_index = self.creation_counter
-        self.creation_counter += 1
-        
-        # Update spatial and type indexes for efficient neighbor queries
-        self._update_spatial_index(particle)
-        
-        # Register with adaptive engine
-        if self.adaptive_engine:
-            self.adaptive_engine.set_embedding(particle.id, particle.position)
-            if AE_policy:
-                self.adaptive_engine.set_policy(particle.id, AE_policy)
-        else:
-            self.log("Adaptive engine not available for particle embedding", "WARNING", "spawn_particle")
+                self.log(f"Skipping particle generation due to particle limit.", level="DEBUG", context="spawn_particle()")
+                return
             
-        linkage_info = f" (linked to {source_particle_id})" if source_particle_id else " (orphan)"
-        self.log(f"Spawned {type} particle {particle.id}{linkage_info}", "INFO", "spawn_particle")
-        
-        # Emit event for other systems using new event handler
-        if emit_event:
-            events_api = api.get_api("event_handler")
-            if events_api:
-                await events_api.emit_event("particle_created", {
+            # Import particle types dynamically to avoid circular imports
+            if type == "memory":
+                particle = MemoryParticle(
+                    id=id, metadata=metadata, energy=energy, 
+                    activation=activation, AE_policy=AE_policy, **kwargs
+                )
+            elif type == "lingual":
+                particle = LingualParticle(
+                    id=id, metadata=metadata, energy=energy,
+                    activation=activation, AE_policy=AE_policy, **kwargs
+                )
+            else:
+                particle = Particle(
+                    id=id, type=type, metadata=metadata, energy=energy,
+                    activation=activation, AE_policy=AE_policy, **kwargs
+                )
+            
+            # Track particle linkage for cognitive mapping
+            if source_particle_id:
+                particle.linked_particles = {"source": source_particle_id}
+                # Also update the source particle to know about this child
+                source_particle = self.get_particle_by_id(source_particle_id)
+                if source_particle:
+                    if not hasattr(source_particle, 'linked_particles'):
+                        source_particle.linked_particles = {}
+                    if 'children' not in source_particle.linked_particles:
+                        source_particle.linked_particles['children'] = []
+                    source_particle.linked_particles['children'].append(particle.id)
+            else:
+                particle.linked_particles = {}
+            
+            # Add to field
+            self.particles.append(particle)
+            self.alive_particles.add(particle.id)
+            
+            # Add creation index for energy cost calculations
+            particle.creation_index = self.creation_counter
+            self.creation_counter += 1
+            
+            # Update spatial and type indexes for efficient neighbor queries
+            self._update_spatial_index(particle)
+            
+            # Register with adaptive engine
+            if self.adaptive_engine:
+                self.adaptive_engine.set_embedding(particle.id, particle.position)
+                if AE_policy:
+                    self.adaptive_engine.set_policy(particle.id, AE_policy)
+            else:
+                self.log("Adaptive engine not available for particle embedding", "WARNING", "spawn_particle")
+                
+            linkage_info = f" (linked to {source_particle_id})" if source_particle_id else " (orphan)"
+            self.log(f"Spawned {type} particle {particle.id}{linkage_info}", "INFO", "spawn_particle")
+            
+            # Emit event for other systems using new event handler
+            if emit_event:
+                await self.event_handler.emit_event("particle_created", {
                     "particle_id": particle.id,
                     "type": type,
                     "source_particle_id": source_particle_id,
                     "metadata": metadata
-                })
-        
-        return particle
-
+                    })
+            
+            return particle
+        except Exception as e:
+            self.log(f"Error spawning particle: {e}", "ERROR", "spawn_particle")
+            return None
 
     async def seed_particles(self):
         if len(self.particles) == 0:
@@ -198,40 +206,42 @@ class ParticleField:
                     activation=0.7,
                     AE_policy="emergent"
                 )
-            self.log(f"Detected 0 initial particles, proceeding to spawn core particles for identity anchoring.")
+            self.log(f"Detected 0 particles, proceeding to spawn core particles for identity anchoring.")
             
 
 
     async def prune_low_value_particles(self):
         self.log(f"Beginning pruning at {time()} with {len(self.particles)} particles present.")
 
-        if len(self.particles) <= 50:
+        if len(self.particles) <= 100:
             return
+        
+        alive_particles = [p for p in self.particles if p.alive]
+        scored_particles = []
+        for p in alive_particles:
+            if hasattr(p, "vitality_score"):
+                score = p.vitality_score()
+            
+            else:  
+                # Base scoring — combine energy and activation
+                base_score = p.energy + p.activation
 
-        scored_particles = [(p.vitality_score(), p) for p in self.particles if p.alive]
-        for p in self.particles:
-            if not p.alive:
-                continue
+                # Valence boost (preserve emotionally charged memories)
+                valence = p.metadata.get("valence", 0.5)
+                if p.type == "memory":
+                    base_score *= (1 + valence * 1.5)
 
-            # Base scoring — combine energy and activation
-            base_score = p.energy + p.activation
+                # Age penalty (unless consolidated)
+                age_penalty = 1.0
+                if hasattr(p, "age"):
+                    age_penalty = 1 / (1 + p.age)
 
-            # Valence boost (preserve emotionally charged memories)
-            valence = p.metadata.get("valence", 0.5)
-            if p.type == "memory":
-                base_score *= (1 + valence * 1.5)
+                # Consolidation flag
+                if p.metadata.get("consolidated", False):
+                    base_score *= 2  # protect long-term memory
 
-            # Age penalty (unless consolidated)
-            age_penalty = 1.0
-            if hasattr(p, "age"):
-                age_penalty = 1 / (1 + p.age)
-
-            # Consolidation flag
-            if p.metadata.get("consolidated", False):
-                base_score *= 2  # protect long-term memory
-
-            # Score = vitality * (age factor)
-            score = base_score * age_penalty
+                # Score = vitality * (age factor)
+                score = base_score * age_penalty
 
             # Store for potential pruning
             scored_particles.append((score, p))
@@ -242,34 +252,14 @@ class ParticleField:
 
         for p in to_prune:
             p.alive = False
+            self.alive_particles.discard(p.id)
+
+            self._remove_particle_from_grid(p.id)
+
             self.adaptive_engine.embeddings.pop(p.id, None) # removing pruned particles from AE embeddings
             self.adaptive_engine.policies.pop(p.id, None)   # removing pruned particles' AE policies
+
             self.log(f"Pruned low-score particle: {p.id}")
-
-    def create_particle(self, id=None, type=None, metadata=None, energy=0.1, activation=0.1, AE_policy=None, **kwargs):
-        """Create a new particle instance based on type"""
-        from apis.agent.cognition.particles.memory_particle import MemoryParticle
-        from apis.agent.cognition.particles.lingual_particle import LingualParticle
-        from apis.agent.cognition.particles.utils.particle_frame import Particle
-        
-        classes = {
-            "memory": MemoryParticle,
-            "lingual": LingualParticle
-        }
-        cls = classes.get(type, Particle)
-
-        if "type" in kwargs:
-            del kwargs["type"]
-
-        return cls(
-            id=id,
-            type=type,
-            metadata=metadata,
-            energy=energy,
-            activation=activation,
-            AE_policy=AE_policy,
-            **kwargs
-        )
 
     def get_particle_by_id(self, particle_id):
         """Find a particle by its ID"""
@@ -280,11 +270,21 @@ class ParticleField:
     
     def get_all_particles(self):
         """Return all active particles"""
-        return self.particles
-    
+        try:
+            particle_list = list(self.particles) if isinstance(self.particles, list) else self.particles
+            return particle_list
+        except Exception as e:
+            self.log(f"Field monitoring error: {e}", level="ERROR", context="get_all_particles")
+            return []
+        
+    # Also add this method if missing:
+    def get_particle_count(self):
+        """Return count of particles"""
+        return len(self.get_all_particles())
+        
     def get_alive_particles(self):
         """Return all alive particles"""
-        return self.alive_particles
+        return [p for p in self.particles if p.id in self.alive_particles]
 
     def get_particles_by_type(self, particle_type):
         """Get particles filtered by type"""
@@ -421,24 +421,27 @@ class ParticleField:
                 
         return stats
 
-    async def inject_action(self, action, source="unknown"):
+    async def inject_action(self, action, source=None, tags=None, context_id = None):
         """
         Inject user action into the particle field by creating appropriate particles
         """
+
+        if source is None:
+            source = "unknown"
+
         self.log(f"Action injection: {action} from {source}")
-        
+
         # Handle different action types
         if isinstance(action, str):
-            # Text input - create lingual particle
-            particle_id = f"action-{len(self.particles)}-{int(time())}"
             
             particle = await self.spawn_particle(
-                id=particle_id,
+                id=None,
                 type="lingual",
                 metadata={
                     "token": action,
                     "source": source,
-                    "interaction_type": "user_input" if source == "user_input" else "system_input"
+                    "interaction_type": "user_input" if source == "user_input" else source,
+                    "tags": tags or []
                 },
                 energy=0.9,
                 activation=0.8,
@@ -447,24 +450,21 @@ class ParticleField:
             
             if particle:
                 self.log(f"Created lingual particle {particle.id} for action: {action[:50]}...")
-                
-                # For now, return simple acknowledgment
-                # In the future, this could trigger more sophisticated response generation
-                if source == "user_input":
-                    return f"Processed: {action[:100]}..." if len(action) > 100 else f"Processed: {action}"
-                else:
-                    return "Action processed"
+
+                # generate via meta voice
+                gen_source = "user_input" if source == "user_input" else source
+                response = self.voice.generate(str(action), source=gen_source, context_particles=particle.id, tags=tags or [], context_id=context_id if context_id else None)
+
             else:
                 self.log("Failed to create particle for action", "ERROR")
-                return None
+                return response
         
         elif isinstance(action, dict):
             # Structured action - handle based on action type
             action_type = action.get("type", "unknown")
-            particle_id = f"action-{action_type}-{len(self.particles)}-{int(time())}"
-            
+
             particle = await self.spawn_particle(
-                id=particle_id,
+                id=None,
                 type="memory",  # Could be different based on action_type
                 metadata={
                     "action_type": action_type,
@@ -485,16 +485,49 @@ class ParticleField:
             self.log(f"Unknown action type: {type(action)}", "WARNING")
             return None
 
-    async def update_particles(self, mood):
+    # In field.py - Add this method:
+    async def continuous_particle_updates(self):
+        """Dedicated particle update loop running independently"""
+        self.log("Particle update loop started", "INFO", "continuous_particle_updates")
+        
+        while getattr(self, '_update_active', True):  # Use field-specific flag
+            try:
+                self.log("Particle update cycle initiated", "DEBUG", "continuous_particle_updates")
+
+                result = await self.update_particles()
+                self.log(f"Particle update result: {result}", "DEBUG", "continuous_particle_updates")
+
+                await asyncio.sleep(1.0)  # 1-second intervals for particle updates
+                
+            except Exception as e:
+                self.log(f"Particle update error: {e}", "ERROR", "continuous_particle_updates")
+                import traceback
+                self.log(f"Error traceback: {traceback.format_exc()}", "ERROR", "continuous_particle_updates")
+                await asyncio.sleep(2.0)
+        
+        self.log("Particle update loop ended", "INFO", "continuous_particle_updates")
+
+    # Add shutdown method:
+    def stop_particle_updates(self):
+        """Stop the continuous particle update loop"""
+        self._update_active = False
+
+    async def update_particles(self):
         """
         Main physics loop with energy-regulated interconnectivity
         All particles can interact but energy cost scales with distance and temporal separation
         """
         current_time = dt.datetime.now()
-        self.total_energy = sum(p.energy for p in self.particles if p.alive)
+        self.total_energy = sum(p.energy for p in self.particles if p.id in self.alive_particles)
+
+        # Log current state
+        self.log(f"Updating particles at {current_time.isoformat()} | Total Energy: {self.total_energy:.2f} | Alive Particles: {len(self.alive_particles)}", "DEBUG", "update_particles")
+
+        # Seed core identity particles if none exist
+        await self.seed_particles()
         
         # Get only alive particles for processing
-        alive_particles = [p for p in self.particles if p.alive]
+        alive_particles = [p for p in self.particles if p.id in self.alive_particles]
         
         if not alive_particles:
             return {"total_energy": 0, "alive_particles": 0}
@@ -537,19 +570,20 @@ class ParticleField:
             if hasattr(particle, "adjust_behavior"):
                 await particle.adjust_behavior(
                     accessible_particles, 
-                    getattr(self, 'temporal_anchor', [0.0] * 11), 
+                    getattr(self, 'temporal_anchor', [0.0] * 12), 
                     particle_context
                 )
 
-            adaptive_force = np.zeros(11)
+            adaptive_force = np.zeros(12)
             for j, other in enumerate(alive_particles):
+
                 if i == j or not other.alive:  # Skip self
                     continue
                 
                 # Calculate energy cost for this interaction
                 distance = distance_matrix[i][j] if j < len(distance_matrix[i]) else 1.0
                 if self.adaptive_engine and hasattr(self.adaptive_engine, 'distance'):
-                    distance = self.adaptive_engine.distance(particle, other)
+                    distance = self.adaptive_engine.distance(particle.id, particle.position, other.id, other.position)
                     
                 energy_cost = self.calculate_interaction_energy_cost(particle, other, distance)
                 
@@ -582,7 +616,7 @@ class ParticleField:
             particle.velocity = np.array(particle.velocity) + adaptive_force
             
             # Energy regeneration: particles slowly recover energy over time
-            base_regen = 0.002  # Base regeneration rate
+            base_regen = 0.004  # Base regeneration rate
             activation_bonus = particle.activation * 0.001  # Higher activation = faster regen
             particle.energy = min(1.0, particle.energy + base_regen + activation_bonus)
             
@@ -591,6 +625,27 @@ class ParticleField:
                 particle.activation *= 0.99  # Gradual activation decay at low energy
             elif particle.energy > 0.7:
                 particle.activation = min(1.0, particle.activation * 1.001)  # Slight boost at high energy
+
+            reproduction_chance = random.random() < particle.energy * particle.activation * 0.0005
+            if reproduction_chance and len(self.particles) < MAX_PARTICLE_COUNT:
+                # Spawn a child particle with slight variations
+                child_id = f"{particle.id}-child-{int(time())}-{random.randint(0,1000)}"
+                child_metadata = particle.metadata.copy()
+                child_metadata["origin"] = f"spawned from {particle.id}"
+                
+                await self.spawn_particle(
+                    id=child_id,
+                    type=particle.type,
+                    metadata=child_metadata,
+                    energy=0.5 * particle.energy,
+                    activation=0.5 * particle.activation,
+                    AE_policy=particle.AE_policy,
+                    source_particle_id=particle.id
+                )
+                
+                # Energy cost for reproduction
+                particle.energy *= 0.7  # Lose some energy after spawning
+                self.log(f"Particle {particle.id} spawned child {child_id}", "INFO", "update_particles")
             
             # Update particle
             if hasattr(particle, "update"):
@@ -598,67 +653,112 @@ class ParticleField:
             if self.adaptive_engine and hasattr(self.adaptive_engine, 'set_embedding'):
                 self.adaptive_engine.set_embedding(particle.id, particle.position)
 
-        # Prune particles if we exceed limit
-        if len(self.particles) > MAX_PARTICLE_COUNT:
-            self.prune_low_value_particles()
-            self.log(f"Pruned particles this frame, total alive: {len([p for p in self.particles if p.alive])}")
-
-        return {"total_energy": self.total_energy, "alive_particles": len(alive_particles)}
+        #return {"total_energy": self.total_energy, "alive_particles": len(alive_particles)}
 
     def _get_grid_key(self, position):
-        """Convert position to spatial grid key for O(1) lookup"""
-        return tuple(int(pos // self.grid_size) for pos in position[:3])  # Use first 3 dims for spatial
+        """Convert position to spatial grid key with error handling"""
+        try:
+            if not isinstance(position, (list, tuple, np.ndarray)):
+                self.log(f"Invalid position type: {type(position)}", "ERROR", "_get_grid_key")
+                return (0, 0, 0)  # Default grid key
+                
+            # Ensure we have at least 3 dimensions
+            pos_array = np.array(position)
+            if len(pos_array) < 3:
+                pos_array = np.pad(pos_array, (0, 3 - len(pos_array)), 'constant')
+            
+            # Use first 3 dimensions for spatial indexing
+            return tuple(int(pos // self.grid_size) for pos in pos_array[:3])
+            
+        except Exception as e:
+            self.log(f"Grid key generation error: {e}", "ERROR", "_get_grid_key")
+            return (0, 0, 0)  # Fallback
     
     def _update_spatial_index(self, particle):
-        """Update spatial grid index for a particle"""
-        grid_key = self._get_grid_key(particle.position)
-        
-        # Remove from old grid cell if exists
-        if particle.id in self.particle_grid_cache:
-            old_key = self.particle_grid_cache[particle.id]
-            if old_key in self.spatial_grid:
-                self.spatial_grid[old_key].discard(particle.id)
-                if not self.spatial_grid[old_key]:
-                    del self.spatial_grid[old_key]
-        
-        # Add to new grid cell
-        if grid_key not in self.spatial_grid:
-            self.spatial_grid[grid_key] = set()
-        self.spatial_grid[grid_key].add(particle.id)
-        self.particle_grid_cache[particle.id] = grid_key
-        
-        # Update type index
-        p_type = getattr(particle, 'category', 'unknown')
-        if p_type not in self.type_index:
-            self.type_index[p_type] = set()
-        self.type_index[p_type].add(particle.id)
-    
+        """Thread-safe spatial grid update"""
+        with self._grid_lock:  # ← Add thread safety
+            try:
+                grid_key = self._get_grid_key(particle.position)
+                
+                # Clean up old grid position
+                if particle.id in self.particle_grid_cache:
+                    old_key = self.particle_grid_cache[particle.id]
+                    if old_key in self.spatial_grid:
+                        self.spatial_grid[old_key].discard(particle.id)
+                        # Clean up empty grid cells
+                        if not self.spatial_grid[old_key]:
+                            del self.spatial_grid[old_key]
+                
+                # Add to new grid cell
+                if grid_key not in self.spatial_grid:
+                    self.spatial_grid[grid_key] = set()
+                
+                self.spatial_grid[grid_key].add(particle.id)
+                self.particle_grid_cache[particle.id] = grid_key
+                
+            except Exception as e:
+                self.log(f"Spatial index error: {e}", "ERROR", "_update_spatial_index")
+
     def get_spatial_neighbors(self, particle, radius=0.6):
-        """Efficient O(log n) spatial neighbor search"""
-        grid_key = self._get_grid_key(particle.position)
-        
-        # Check surrounding grid cells (3x3x3 = 27 cells max)
-        neighbor_ids = set()
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                for dz in [-1, 0, 1]:
-                    check_key = (grid_key[0] + dx, grid_key[1] + dy, grid_key[2] + dz)
-                    if check_key in self.spatial_grid:
-                        neighbor_ids.update(self.spatial_grid[check_key])
-        
-        # Filter by actual distance and radius
-        neighbors = []
-        for pid in neighbor_ids:
-            if pid != particle.id:
-                other = self.get_particle_by_id(pid)
-                if other and other.alive:
-                    dist = self.adaptive_engine.distance(particle, other)
-                    if dist <= radius:
-                        neighbors.append((dist, other))
-        
-        # Sort by distance and return particles only
-        neighbors.sort(key=lambda x: x[0])
-        return [other for _, other in neighbors]
+        """Thread-safe efficient spatial neighbor search"""
+        with self._grid_lock:
+            try:
+                grid_key = self._get_grid_key(particle.position)
+                
+                # Check surrounding grid cells
+                neighbor_ids = set()
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        for dz in [-1, 0, 1]:
+                            check_key = (grid_key[0] + dx, grid_key[1] + dy, grid_key[2] + dz)
+                            if check_key in self.spatial_grid:
+                                neighbor_ids.update(self.spatial_grid[check_key])
+                
+                # Filter by actual distance and radius  
+                neighbors = []
+                for pid in neighbor_ids:
+                    if pid != particle.id and pid in self.alive_particles:  # ← Check alive first
+                        other = self.get_particle_by_id(pid)
+                        if other and other.alive:
+                            try:
+                                if self.adaptive_engine and hasattr(self.adaptive_engine, 'distance'):
+                                    dist = self.adaptive_engine.distance(particle, other)
+                                else:
+                                    # Fallback distance calculation
+                                    dist = np.linalg.norm(np.array(particle.position) - np.array(other.position))
+                                
+                                if dist <= radius:
+                                    neighbors.append((dist, other))
+                            except Exception as e:
+                                self.log(f"Distance calculation error: {e}", "ERROR", "get_spatial_neighbors")
+                
+                # Sort by distance and return particles only
+                neighbors.sort(key=lambda x: x[0])
+                return [other for _, other in neighbors]
+                
+            except Exception as e:
+                self.log(f"Spatial neighbor search error: {e}", "ERROR", "get_spatial_neighbors")
+                return []
+    
+    def _remove_particle_from_grid(self, particle_id):
+        """Remove dead particle from spatial indexing"""
+        with self._grid_lock:
+            try:
+                if particle_id in self.particle_grid_cache:
+                    grid_key = self.particle_grid_cache[particle_id]
+                    
+                    # Remove from grid
+                    if grid_key in self.spatial_grid:
+                        self.spatial_grid[grid_key].discard(particle_id)
+                        if not self.spatial_grid[grid_key]:
+                            del self.spatial_grid[grid_key]
+                    
+                    # Remove from cache
+                    del self.particle_grid_cache[particle_id]
+                    
+            except Exception as e:
+                self.log(f"Grid cleanup error: {e}", "ERROR", "_remove_particle_from_grid")
+
 
     def get_particle_by_id(self, particle_id):
         """Efficient O(1) particle lookup by ID"""
@@ -676,7 +776,7 @@ class ParticleField:
             
             # Prepare field state for persistence
             field_state = {
-                "timestamp": dt.now().isoformat(),
+                "timestamp": dt.datetime.now().isoformat(),
                 "total_particles": len(self.particles),
                 "alive_particles": len(self.alive_particles),
                 "creation_counter": self.creation_counter,
@@ -716,7 +816,7 @@ class ParticleField:
         """
         try:
             field_state = {
-                "timestamp": dt.now().isoformat(),
+                "timestamp": dt.datetime.now().isoformat(),
                 "total_particles": len(self.particles),
                 "alive_particles": len(self.alive_particles),
                 "creation_counter": self.creation_counter,
@@ -802,5 +902,3 @@ class ParticleField:
         except Exception as e:
             self.log(f"Error during field restoration: {e}", level="ERROR", context="restore_from_state")
 
-# Register the API
-api.register_api("particle_field", ParticleField())

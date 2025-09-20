@@ -7,15 +7,12 @@ from textual.containers import Vertical
 from apis.api_registry import api
 import time
 
-class SystemLogWidget(Static):
+class SystemLogWidget(RichLog):
     def __init__(self):
         super().__init__()
         self.logger = api.get_api("logger")
         self.last_log_count = 0
-        
-    def compose(self):
-        with Vertical():
-            yield RichLog(id="system-log-display", highlight=True, markup=True)
+        self.id = "system-log-display"
     
     def on_mount(self):
         if self.logger:
@@ -30,8 +27,6 @@ class SystemLogWidget(Static):
         
         # Only show new logs since last update
         if len(logs) > self.last_log_count:
-            log_display = self.query_one("#system-log-display", RichLog)
-            
             for log_entry in logs[self.last_log_count:]:
                 level = log_entry.get("level", "INFO")
                 message = log_entry.get("message", "")
@@ -48,18 +43,18 @@ class SystemLogWidget(Static):
                 
                 # Color coding based on level
                 if level == "ERROR":
-                    log_display.write(f"[red][{time_str}] ERROR{source_info}{context_info}: {message}[/red]")
+                    self.write(f"[red][{time_str}] ERROR{source_info}{context_info}: {message}[/red]")
                 elif level == "SUCCESS":
-                    log_display.write(f"[green][{time_str}] SUCCESS{source_info}{context_info}: {message}[/green]")
+                    self.write(f"[green][{time_str}] SUCCESS{source_info}{context_info}: {message}[/green]")
                 elif level == "SYSTEM":
-                    log_display.write(f"[cyan][{time_str}] SYSTEM{source_info}{context_info}: {message}[/cyan]")
+                    self.write(f"[cyan][{time_str}] SYSTEM{source_info}{context_info}: {message}[/cyan]")
                 elif level == "STATUS":
-                    log_display.write(f"[yellow][{time_str}] STATUS{source_info}{context_info}: {message}[/yellow]")
+                    self.write(f"[yellow][{time_str}] STATUS{source_info}{context_info}: {message}[/yellow]")
                 elif level == "COGNITIVE":
-                    log_display.write(f"[magenta][{time_str}] COGNITIVE{source_info}{context_info}: {message}[/magenta]")
+                    self.write(f"[magenta][{time_str}] COGNITIVE{source_info}{context_info}: {message}[/magenta]")
                 elif level == "WARNING":
-                    log_display.write(f"[orange][{time_str}] WARNING{source_info}{context_info}: {message}[/orange]")
+                    self.write(f"[orange][{time_str}] WARNING{source_info}{context_info}: {message}[/orange]")
                 else:
-                    log_display.write(f"[white][{time_str}] INFO{source_info}{context_info}: {message}[/white]")
-            
+                    self.write(f"[white][{time_str}] INFO{source_info}{context_info}: {message}[/white]")
+
             self.last_log_count = len(logs)

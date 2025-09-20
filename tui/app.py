@@ -9,6 +9,7 @@ from textual.reactive import reactive
 from apis.api_registry import api
 import threading
 import time
+import asyncio
 
 # Import tabs at module level
 from tui.pages.home import HomeScreen
@@ -269,9 +270,23 @@ class MainApp(App):
         padding: 1;
     }
 
+    .agent-chat-input-area {
+        height: 10;
+        width: 1fr;
+        padding: 1;
+        border: solid cyan;
+    }
+
     .agent-chat-input {
         height: 3;
+        width: 1fr;
         text-align: left;
+    }
+
+    .agent-chat-send-btn {
+        height: 3;
+        width: 5;
+        margin-left: 1;
     }
 
     .agent-comms-controls-title {
@@ -508,7 +523,7 @@ class MainApp(App):
 
     def on_unmount(self):
         try:
-            api.handle_shutdown()
+            asyncio.run(api.handle_shutdown())
         except Exception as e:
             if self.logger:
                 self.logger.log(f"Error during shutting down Cognition Framework: {e}", "ERROR", "tui_shutdown", "MainApp")

@@ -1,5 +1,6 @@
 from textual.widgets import Static
 from textual.app import ComposeResult
+from textual.containers import Vertical, Horizontal, Container
 import time
 import math
 
@@ -15,11 +16,15 @@ class FieldVisualizerWidget(Static):
         # f, v - Emotional
         # q - Certainty
 
+
         self.render_cache = {}
         self.connection_threshold = 0.3
         self.last_render_time = 0
         self.field_width = 80
         self.field_height = 20
+
+    def on_mount(self):
+        self.set_interval(1.0, self.update_display)
 
     async def update_display(self):
         if not self.field_api:
@@ -265,4 +270,7 @@ class FieldVisualizerWidget(Static):
         # Your ASCII art generation logic here
         # Use thin lines (─│┌┐└┘├┤┬┴┼) for connections
         # Use particles as main focal points
+
+      
+
         pass

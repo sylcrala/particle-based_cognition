@@ -1,6 +1,7 @@
 """
 central API 
 """
+import asyncio
 
 
 class APIRegistry:
@@ -38,51 +39,52 @@ class APIRegistry:
         if not api or not hasattr(api, method):
             raise AttributeError(f"API '{name}' does not have method '{method}'.")
         
+        method_obj = getattr(api, method)
         
+        if asyncio.iscoroutine(method_obj):
+            return method_obj(*args, **kwargs)
+        else:
+            return method_obj(*args, **kwargs)
 
-        return getattr(api, method)(*args, **kwargs)
-    
-    def handle_shutdown(self):
+    async def handle_shutdown(self):
         """
         Graceful cognitive shutdown sequence to prevent amnesia and preserve agent state
         """
         try:
             print("Initiating graceful cognitive shutdown...")
-            
-            # Phase 1: Notify agent consciousness of impending shutdown
-            if "consciousness_loop" in self.apis:
-                consciousness = self.get_api("consciousness_loop")
-                if consciousness and hasattr(consciousness, 'prepare_shutdown'):
-                    print("Notifying consciousness system...")
-                    consciousness.prepare_shutdown()
-            
-            # Phase 2: Save critical memory state
+
+            # Phase 1: Save critical memory state
             if "memory_bank" in self.apis:
                 memory = self.get_api("memory_bank")
                 if memory and hasattr(memory, 'emergency_save'):
                     print("Performing emergency memory save...")
                     memory.emergency_save()
-            
-            # Phase 3: Preserve particle field state
+
+            # Phase 2: Preserve particle field state
             if "particle_field" in self.apis:
                 field = self.get_api("particle_field")
                 if field and hasattr(field, 'save_field_state'):
                     print("Saving particle field state...")
                     field.save_field_state()
-            
-            # Phase 4: Save adaptive learning progress
+
+            # Phase 3: Save adaptive learning progress
             if "adaptive_engine" in self.apis:
                 adaptive = self.get_api("adaptive_engine")
                 if adaptive and hasattr(adaptive, 'save_learning_state'):
                     print("Preserving learning adaptations...")
                     adaptive.save_learning_state()
             
-            # Phase 5: Final system state snapshot
+            # Phase 4: System state snapshot
             if "logger" in self.apis:
                 logger = self.get_api("logger")
                 if logger:
                     logger.log("System graceful shutdown completed", "INFO", "APIRegistry", "shutdown")
-            
+
+            # Phase 5: Final shutdown
+            if "cognition_loop" in self.apis:
+                cognition = self.get_api("cognition_loop")
+                cognition.conscious_active = False
+
             print("Cognitive shutdown sequence completed successfully")
             
         except Exception as e:

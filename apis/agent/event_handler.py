@@ -1,5 +1,5 @@
 """
-Modernized Event Handler API - integrates with API registry and shared services
+Agent Event Handler - integrates with API registry and shared services
 """
 
 import asyncio
@@ -11,15 +11,18 @@ logger = api.get_api("logger")
 
 class EventHandler:
     """
-    Central event handling system integrated with API architecture
+    Central event handling system 
     """
     
-    def __init__(self):
+    def __init__(self, field = None, memory = None):
         self.event_queue = PriorityEventQueue()
         self.event_handlers = {}
         self.running = False
         self.event_loop_task = None
-        
+
+        self.field = field
+        self.memory = memory
+                
         # Register default event handlers
         self.register_default_handlers()
     
@@ -59,9 +62,10 @@ class EventHandler:
         if priority is None:
             priority = self.get_default_priority(event_type, source)
         
-        await self.event_queue.put(event, priority=priority)
+        result = await self.event_queue.put(event, priority=priority)
         self.log(f"Event emitted: {event_type} from {source}", "DEBUG")
-    
+        return result
+
     def get_default_priority(self, event_type, source):
         """Get default priority for different event types"""
         priority_map = {
@@ -100,11 +104,21 @@ class EventHandler:
     async def handle_particle_created(self, event):
         """Handle particle creation events"""
         particle_data = event["data"]
-        self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}")
-        
-        # Could trigger reflection or other cognitive processes
-        # For now, just log the event
-        return True
+        try:
+            self.field.spawn_particle(
+                type=particle_data.get("type", "unknown"),
+                metadata=particle_data.get("metadata", {}),
+                energy=particle_data.get("energy", 0.5),
+                activation=particle_data.get("activation", 0.5),
+                source_particle_id=particle_data.get("source_particle_id"),
+                emit_event=False  # Avoid recursive event emission
+            )
+            self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}")
+            return True
+        except Exception as e:
+            self.log(f"Error creating particle: {e}", "ERROR")
+            return False
+
     
     async def handle_user_input(self, event):
         """Handle user input events"""
@@ -115,12 +129,18 @@ class EventHandler:
             await self.emit_event("shutdown", {"reason": "user_request"}, source="user")
             return "Shutdown initiated"
         
+        config = api.get_api("config")
+        if config and config.get("user_name"):
+            user_name = config.get("user_name")
+        else:
+            user_name = "Unknown User"
+
         # Route to particle field for processing
-        field_api = api.get_api("particle_field")
-        if field_api:
+        field = self.field
+        if field:
             try:
-                input_for_agent = f"<s>{user_data}</s>"
-                result = await field_api.inject_action(input_for_agent, source="user_input")
+                input_for_agent = f"{user_name} said: <s>{user_data}</s>"
+                result = await field.inject_action(input_for_agent, source="user_input")
                 
                 if result:
                     self.log(f"User input processed, response generated")
@@ -141,10 +161,10 @@ class EventHandler:
         self.log("System idle - performing maintenance", "DEBUG")
         
         # Could trigger particle pruning, memory consolidation, etc.
-        memory_api = api.get_api("memory_bank")
-        if memory_api and hasattr(memory_api, 'perform_maintenance'):
-            await memory_api.perform_maintenance()
-        
+        memory = self.memory
+        if memory and hasattr(memory, 'perform_maintenance'):
+            await memory.perform_maintenance()
+
         return True
     
     async def handle_shutdown(self, event):
@@ -168,16 +188,19 @@ class EventHandler:
         self.log(f"Reflection triggered: {reflection_data}")
         
         # Could route to specialized reflection system
+        # TODO
         return True
     
     async def handle_cognitive_event(self, event):
         """Handle general cognitive events"""
         self.log(f"Cognitive event: {event['data']}")
+        # TODO
         return True
     
     async def handle_unknown_event(self, event):
         """Handle unknown event types"""
         self.log(f"Unknown event type: {event['type']}", "WARNING")
+        # TODO
         return None
     
     def register_handler(self, event_type, handler):
@@ -275,7 +298,3 @@ class PriorityEventQueue:
     def qsize(self):
         """Get queue size"""
         return len(self._queue)
-
-# Register the event handler API
-event_handler = EventHandler()
-api.register_api("event_handler", event_handler)

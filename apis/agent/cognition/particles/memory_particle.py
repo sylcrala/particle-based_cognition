@@ -21,10 +21,10 @@ class MemoryParticle(Particle):
 
 
 
-    async def update_self(self, memory_bank, new_value):
+    async def update_self(self, new_value):
         self.append_content(new_value)
         self.embedding = self._message_to_vector(self.token)
-        await memory_bank.update(
+        await self.memory_bank.update(
             key=self.metadata["key"],
             value=self.token,
             source="reflection",
@@ -32,12 +32,12 @@ class MemoryParticle(Particle):
         )
 
     
-    async def retrieve_related(self, memory_bank, k=5):
-        results = memory_bank.query_memory_by_vector(self.embedding, k)
+    async def retrieve_related(self, k=5):
+        results = self.memory_bank.query_memory_by_vector(self.embedding, k)
         related_particles = []
         for doc, meta in results:
-            p = await MemoryParticle.spawn_from_bank(
-                engine=memory_bank.particle_engine,
+            p = await self.spawn_from_bank(
+                engine=self.memory_bank.particle_engine,
                 key=meta["key"],
                 value=json.loads(doc),
                 persistent=(meta.get("layer") == "core")
@@ -46,10 +46,10 @@ class MemoryParticle(Particle):
         return related_particles
 
 
-    async def reflect(self, memory_bank):
-        related = await self.retrieve_related(memory_bank)
+    async def reflect(self):
+        related = await self.retrieve_related()
         reflection = f"'{self.token}' relates to {len(related)} memory fragments."
-        await memory_bank.update(
+        await self.memory_bank.update(
             key=f"reflection:{uuid.uuid4()}",
             value=reflection,
             source="reflection"
@@ -58,9 +58,6 @@ class MemoryParticle(Particle):
 
     async def create_linked_particle(self, particle_type, content, relationship_type="triggered"):
         """Create a new particle linked to this memory particle"""
-        field_api = api.get_api("particle_field")
-        if not field_api:
-            return None
             
         metadata = {
             "content": content,
@@ -73,7 +70,7 @@ class MemoryParticle(Particle):
         energy = 0.6 + (self.importance * 0.3)
         activation = 0.5 + (self.importance * 0.2)
             
-        return await field_api.spawn_particle(
+        return await self.field.spawn_particle(
             type=particle_type,
             metadata=metadata,
             energy=energy,
@@ -116,5 +113,3 @@ class MemoryParticle(Particle):
             self.importance = max(self.importance, other.importance)
             return True
         return False
-
-

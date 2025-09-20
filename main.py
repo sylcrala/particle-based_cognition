@@ -6,17 +6,16 @@ Main entry point for Quantum Cognitive System with integrated TUI console
 import asyncio
 import os
 import sys
+import time
 import subprocess
 import threading
 from pathlib import Path
 from queue import Queue
 from apis.api_registry import api
+from shared_services import config
+from shared_services import logging
 
-# Import shared services to register APIs
-import shared_services.logging
-import shared_services.config
-import shared_services.system_metrics
-import apis.personal_tools.todo_list.todolist_api
+
 
 # Global log queue for TUI communication
 logger = api.get_api("logger")
@@ -32,92 +31,142 @@ def log_to_console(message, level="INFO", context = None):
     if logger:
         logger.log(message, level, context=context, source="MainApplication")
 
-async def initialize_cognitive_systems():
-    """Initialize all cognitive systems and log to TUI"""
-    log_to_console("Quantum Cognitive System Starting...", "SYSTEM")
-    log_to_console("=" * 50, "SYSTEM")
-    from apis.agent import loop
-    from apis.agent import event_handler
-    loop.initialize_cognitive_systems()
-
-    # Initialize system metrics first (foundational monitoring)
-    system_metrics = api.get_api("system_metrics")
-    if system_metrics:
-        log_to_console("System metrics monitoring initialized", "SYSTEM")
-    else:
-        log_to_console("System metrics not available", "WARNING")
-    
-    # Initialize configuration
-    config = api.get_api("config")
-    if config:
-        agent_config = config.get_agent_config()
-        log_to_console(f"Configuration loaded for agent: {agent_config.get('name', 'Unknown')}", "SYSTEM")
-    else:
-        log_to_console("Configuration not available", "ERROR")
-
-    # Restore previous cognitive state if available
-    log_to_console("Checking for previous cognitive state...", "SYSTEM")
-    await api.handle_startup_restoration()
-    
-    # Initialize all cognitive systems
-    log_to_console("Initializing cognitive systems...", "SYSTEM")
-    
-    # Get core APIs
-    memory_api = api.get_api("memory_bank")
-    field_api = api.get_api("particle_field") 
-    adaptive_api = api.get_api("adaptive_engine")
-    model_handler_api = api.get_api("model_handler")
-    
-    log_to_console("Core systems status:", "SYSTEM")
-    log_to_console(f"   Memory Bank: {'ONLINE' if memory_api else 'OFFLINE'}", "SYSTEM")
-    log_to_console(f"   Particle Field: {'ONLINE' if field_api else 'OFFLINE'}", "SYSTEM")
-    log_to_console(f"   Adaptive Engine: {'ONLINE' if adaptive_api else 'OFFLINE'}", "SYSTEM")
-    log_to_console(f"   Model Handler: {'ONLINE' if model_handler_api else 'OFFLINE'}", "SYSTEM")
-    log_to_console(f"   Event Handler: {'ONLINE' if event_handler else 'OFFLINE'}", "SYSTEM")
-    log_to_console(f"   System Metrics: {'ONLINE' if system_metrics else 'OFFLINE'}", "SYSTEM")
-    
-    # Show current state
-    if field_api:
-        particles = field_api.get_all_particles()
-        log_to_console(f"   Active particles: {len(particles)}", "SYSTEM")
-    
-    log_to_console("System Status: READY", "SUCCESS")
-    log_to_console("   Use navigation menu or Ctrl+C for graceful shutdown", "INFO")
-    
-    return {"memory": memory_api, "field": field_api, "adaptive": adaptive_api, "events": event_handler}
 
 
-#def launch_tui_dedicated_terminal(): tbd
+def launch_tui_terminal():
+    current_dir = Path(__file__).parent
+    tui_script = "./tui_launcher.py"
 
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen([
+                "cmd", "/c", "start", "cmd", "/k", f"cd /d {current_dir} && python {tui_script}"
+            ])
+            log_to_console("Launched TUI in new terminal window (Windows)", "INFO")
 
-def main():
+        elif sys.platform == "darwin":
+            subprocess.Popen([
+                "osascript", "-e",
+                f'tell application "Terminal" to do script "cd {current_dir} && python3 {tui_script}"'
+            ])
+            log_to_console("Launched TUI in new terminal window (macOS)", "INFO")
+        
+        elif sys.platform == "linux":
+            try:
+                subprocess.Popen([
+                    "gnome-terminal", "--title=Persistence Toolkit",
+                    "--", "python", str(tui_script)
+                ])
+                log_to_console("Launched TUI in new terminal window using gnome-terminal (Linux)", "INFO")
+
+            except FileNotFoundError:
+                subprocess.Popen([
+                    "xterm", "-title", "Persistence Toolkit", "-e", f"python {tui_script}"
+                ])
+                log_to_console("Launched TUI in new terminal window using xterm (Linux)", "INFO")
+
+        return True
+    
+    except Exception as e:
+        log_to_console(f"Failed to launch TUI terminal: {e}", "ERROR")
+        return False
+
+async def main():
     """Main orchestrator for cognitive system + TUI"""
+    from apis.agent.loop import CognitionLoop
 
-    logger.log(f"System startup initializing...", "INFO", "Main", "main")
+    print("Starting Persistence Toolkit, all systems initializing...")
+    print("=" * 60)
+    print("This terminal is dedicated for the cognition framework and system logs.")
+    print("Please do not close this terminal to ensure proper operation.")
 
-    from tui.app import MainApp
-    MainApp().run()
 
-    logger.log(f"TUI startup complete, initializing cognitive systems...", "INFO", "Main", "main")
+    print("=" * 60)
+    log_to_console(f"TUI startup initializing...", "INFO", "main()")
+    print("Launching TUI console in separate terminal...")
+    try:
+        # Launch TUI in separate terminal window
+        #time.sleep(30)
+        if launch_tui_terminal():
+            log_to_console(f"TUI startup complete, initializing cognitive systems...", "INFO", "main()")
+            print("TUI launched successfully in new terminal window.")
+            #time.sleep(2)  # Give TUI time to initialize
+        else:
+            log_to_console("TUI launch failed, launching TUI in main terminal (likely blocking the cognition framework)", "WARNING", "main()")
+            from tui.app import MainApp
+            app = MainApp()
+            app.run()
+            return
+    except Exception as e:
+        log_to_console(f"Error launching TUI: {e}", "ERROR", "main()")
+        print(f"Error launching TUI: {e}")
+        return
+
+
 
     # Start cognitive systems initialization asynchronously
     try:
-        asyncio.run(initialize_cognitive_systems())
-    except Exception as e:
-        logger.log(f"Error during cognitive systems initialization: {e}", "ERROR", "Main", "main")
+        print("=" * 60)
+        print("Beginning cognitive systems initialization...")
+        log_to_console("Beginning cognitive systems initialization...", "INFO", "main()")
+        
+        try:
+            print("Importing and registering agent core...")
+            from apis.agent.core import AgentCore
 
-    logger.log(f"System is fully online", "SUCCESS", "Main", "main")
-    
+            agent_core = AgentCore()
+
+            api.register_api("agent", agent_core)
+
+            print("Agent core initialized successfully.")
+            log_to_console("Agent core initialized successfully.", "INFO", "main()")
+        except Exception as e:
+            log_to_console(f"Error initializing cognition framework APIs: {e}", "ERROR", "main()")
+            print(f"Error initializing cognition framework APIs: {e}")
+            return
+
+        print("=" * 60)
+
+        try:    
+            status = await agent_core.cognition_loop.get_status()
+
+            print("Final systems check: ")
+            print(f"Registered APIs: {api.list_apis()}")
+            log_to_console(f"Registered APIs: {api.list_apis()}", "INFO", "main()")
+            print(f"Agent Status: {status}")
+
+        except Exception as e:
+            log_to_console(f"Error during final agent initialization: {e}", "ERROR", "main()")
+            print(f"Error during final agent initialization: {e}")
+
+        log_to_console("Cognitive systems initialization complete", "SUCCESS", "main()")
+        print("Main terminal ready for monitoring. Press Ctrl+C to exit gracefully.")
+
+        try:
+            await agent_core.run() # starting cognition loop lastly to ensure console doesn't close
+        except Exception as e:
+            log_to_console(f"Error during final agent initialization: {e}", "ERROR", "main()")
+            print(f"Error during final agent initialization: {e}")
+
+    except Exception as e:
+        log_to_console(f"Error during cognitive systems initialization: {e}", "ERROR", "main()")
+        print(f"Error during cognitive systems initialization: {e}")
+
+
+
 
 
 
 if __name__ == "__main__":
-    try:
-        # Run the main async function
-        main()
+    try:        
+        asyncio.run(main())
         
     except KeyboardInterrupt:
-        print("\nQuantum Cognitive System shutdown complete")
+        print("\nShutdown signal received, initiating graceful shutdown...")
+        log_to_console("Shutdown signal received, initiating graceful shutdown...", "SYSTEM", "main()")
+        asyncio.run(api.handle_shutdown())
+        log_to_console("System shutdown complete. Goodbye!", "SUCCESS", "main()")
     except Exception as e:
         print(f"\nCritical error: {e}")
+        log_to_console(f"Critical error: {e}", "ERROR", "main()")
         sys.exit(1)

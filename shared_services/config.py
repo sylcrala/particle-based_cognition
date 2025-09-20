@@ -10,7 +10,7 @@ class Config():
         self.user_name = "Tony"
 
         self.AGENT_CONFIG = {
-            "name": "Mistral"
+            "name": "Misty"
         }
 
         self.LLM_CONFIG = {

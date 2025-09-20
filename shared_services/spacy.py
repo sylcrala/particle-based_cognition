@@ -7,7 +7,6 @@ SpaCy NLP Integration
 import spacy
 from apis.api_registry import api
 
-logger = api.get_logger("logger")
 nlp = spacy.load("en_core_web_sm")
 
 

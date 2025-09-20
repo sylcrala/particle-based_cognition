@@ -14,11 +14,13 @@ if not config:
 llm_config = config.get_llm_config()
 
 class ModelHandler:
-    def __init__(self):
+    def __init__(self, events = None, meta_voice = None):
         torch.cuda.empty_cache()  # clearing cuda cache
 
         # Check CUDA availability and fall back to CPU if needed
         cuda_available = False
+
+        self.logger = api.get_api("logger")
         
         try:
             if torch.cuda.is_available():
@@ -47,18 +49,17 @@ class ModelHandler:
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
         self.tokenizer.pad_token = self.tokenizer.eos_token  
 
-        self.metavoice = api.get_api("meta_voice")  # Fixed: was "metavoice"
+        self.metavoice = meta_voice
         if not self.metavoice:
-            self.logger = api.get_api("logger")
+            
             if self.logger:
-                self.logger.log("MetaVoice API not available during ModelHandler init", "WARNING", "ModelHandler.__init__", "ModelHandler")
+                self.logger.log("MetaVoice not available during ModelHandler init", "WARNING", "ModelHandler.__init__", "ModelHandler")
             # Don't raise error, just log warning - metavoice might be optional
         
-        self.events = api.get_api("event_handler")
+        self.events = events
         if not self.events:
-            self.logger = api.get_api("logger") 
             if self.logger:
-                self.logger.log("Event Handler API not available during ModelHandler init", "WARNING", "ModelHandler.__init__", "ModelHandler")
+                self.logger.log("Event Handler not available during ModelHandler init", "WARNING", "ModelHandler.__init__", "ModelHandler")
             # Don't raise error, just log warning - events might be optional
 
         # Set up BitsAndBytesConfig and device mapping
@@ -67,7 +68,7 @@ class ModelHandler:
                 # Try CUDA setup with quantization
                 quant_config = BitsAndBytesConfig(
                     load_in_4bit=self.load_in_4bit,
-                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
                     bnb_4bit_use_double_quant=True,
                     bnb_4bit_quant_type="nf4",
                     llm_int8_enable_fp32_cpu_offload=True
@@ -81,7 +82,7 @@ class ModelHandler:
                     max_memory=max_memory,
                     quantization_config=quant_config,
                     trust_remote_code=False,
-                    torch_dtype=torch.float16
+                    torch_dtype=torch.bfloat16
                 )
             else:
                 # CPU fallback
@@ -89,7 +90,7 @@ class ModelHandler:
                     self.model_path,
                     device_map="cpu",
                     trust_remote_code=False,
-                    torch_dtype=torch.float32
+                    torch_dtype=torch.bfloat16
                 )
                 
         except Exception as e:
@@ -102,7 +103,7 @@ class ModelHandler:
                 self.model_path,
                 device_map="cpu",
                 trust_remote_code=False,
-                torch_dtype=torch.float32
+                dtype=torch.float32
             )
 
         self.generator = pipeline(
@@ -119,29 +120,28 @@ class ModelHandler:
         if not prompt:
             return "[Error: No prompt provided]"
         
-        prompt = f"Received message from {config.user_name}: <s>{prompt}</s>" if source == "user_input" else f"I thought about: {prompt}"
+        prompt = f"Received message from {config.user_name}: <s>{prompt}</s>" if source == "user_input" else prompt
 
         #debug
         print(f"[ModelHandler] Generating response for prompt: {prompt}")
         print(f"[ModelHandler] Context ID: {context_id}, Tags: {tags}")
-        #_log_event("generation", f"Generating response for prompt: {prompt}, Context ID: {context_id}, Tags: {tags}")
+        self.logger.log(f"Generating response for prompt: {prompt}, Context ID: {context_id}, Tags: {tags}", "INFO", "ModelHandler.generate", "ModelHandler")
         
         try:
             result = self.generator(prompt, **kwargs)
             output = result[0]["generated_text"].strip() if isinstance(result, list) else "[Error: Format]"
+            print(f"[ModelHandler] Generation output: {output}")
+            self.logger.log(f"Generation output: {output}", "INFO", "ModelHandler.generate", "ModelHandler")
             return output
         except Exception as e:
             output = f"[Generation Error: {e}]"
+            print(f"[ModelHandler] Generation error: {e}")
+            self.logger.log(f"Generation error: {e}", "ERROR", "ModelHandler.generate", "ModelHandler")
             return output
 
         #result = self.generator(prompt, **kwargs)
         #output = result[0]["generated_text"].strip() if isinstance(result, list) else "[Error: Format]"
 
-    async def reflect(self, particle):
-        if self.metavoice:
-            return await self.metavoice.reflect(particle)
-        return await self.generate(particle.get_content())
     
 
 
-api.register_api("model_handler", ModelHandler())

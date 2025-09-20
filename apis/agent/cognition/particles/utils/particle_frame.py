@@ -14,14 +14,17 @@ from apis.api_registry import api
 
 
 class Particle:
-    def __init__(self, id=None, type="default", metadata=None, energy=0.0, activation=0.0, AE_policy="reflective", memory_bank = None, **kwargs):
+    def __init__(self, id=None, type="default", metadata=None, energy=0.0, activation=0.0, AE_policy="reflective",  **kwargs):
 
         self.id = uuid.uuid4() if id is None else id
         self.name = f"Particle-{self.id}"
         self.type = type
         self.type_id = category_to_identity_code(self.type)
 
-        self.memory_bank = memory_bank
+        self.field = api.get_api("_agent_field")
+        self.memory_bank = api.get_api("_agent_memory")
+        self.lexicon_store = api.get_api("_agent_lexicon")
+        self.adaptive_engine = api.get_api("_agent_adaptive_engine")
 
         self.metadata = metadata or {}
         if self.type == "memory":                                               ### CHANGE THIS -- have a set amount of memory particles auto-initiated on launch with a minimal schema establishing independent identity and distinguishing between potential users and mistral.
@@ -29,7 +32,7 @@ class Particle:
             self.metadata.setdefault("content", "")
             self.metadata.setdefault("created_at", dt.datetime.now().timestamp())
         
-        self.velocity = np.zeros(11, dtype=np.float32)
+        self.velocity = np.zeros(12, dtype=np.float32)
         self.activation = activation or 0.0
         self.energy = energy or random.uniform(0.1, 1.0)
         self.policy = AE_policy or random.choice(["cooperative", "avoidant", "chaotic", "inquisitive", "dormant", "disruptive", "reflective", "emergent"])
@@ -75,9 +78,11 @@ class Particle:
 
         self.metadata["circadian_phase"] = self.get_circadian_phase()
 
+        self.creation_index = self.position[3]
 
 
-    def log(self, message, level = None, context = None):
+
+    def log(self, message, level = None, context = None, source = None):
         if source != None:
             source = "BaseParticle(frame)"
         else:
@@ -110,7 +115,7 @@ class Particle:
         return [round(math.cos(angle), 3), round(math.sin(angle), 3)]
 
     async def update(self):
-        for i in range(11):
+        for i in range(12):
             self.position[i] += self.velocity[i] * 0.05
             self.velocity[i] *= 0.95
         self.activation *= 0.98
@@ -141,72 +146,88 @@ class Particle:
         random.seed(seed)
         return [random.uniform(-1, 1) for _ in range(12)]
 
-    #adjust particle behavior
     async def adjust_behavior(self, neighbors, temporal_anchor, particle_context):
-               
-        #temporal centerpoint (w as the anchor)
-        avg_w = sum(1 / (1 + self.position[3]) for p in particle_context["all_particles"])
-
-        #using avg_w as the attraction anchor
-        temporal_anchor = [0.0] * 11
-        threshold = 0.93 + (particle_context["total_energy"] / 1000)
-        """        
-        for p in particle_context["all_particles"]:
-            weight = 1 / (1 + p.position[3])
-            if p.type == "memory" and p.position[8] > threshold: 
-            
-                action="grow",  # or "resonance_reinforcement", etc.
-                context={
-                    "particle_count": len(particle_context["all_particles"]),
-                    "system_metrics": get_system_metrics(),
-                    "reason": "spontaneous growth from memory valence"
-                },
-                await trigger_callback=lambda: self.inject_action({
-                        "position": p.position[:3],
-                        "valence": 0.7,
-                        "intent": 1.0,
-                        "trigger": "resonance_reinforcement"
-                })
-            
-                    # inject_action will be called if permitted
-
-        """
-        drift_force = [(temporal_anchor[i] - self.position[i]) * 0.01 for i in range(11)]
-
-
-        #local neighbor attraction/repulsion
-
-        if neighbors:
-            if neighbors:
-                local_center = [
-                    sum(n.position[i] for n in neighbors) / len(neighbors)
-                    for i in range(11)
-                ]
-            else:
-                local_center = [0.0] * 11  # or some fallback/default value
-
-            attraction_force = [(local_center[i] - self.position[i]) * 0.05 for i in range(11)]
-            self.activation += 0.1 * len(neighbors)
-
-            # energy exchange 
+        # Calculate experiential temporal anchor
+        temporal_anchor = self.calculate_experiential_temporal_anchor(particle_context)
+        
+        # Experience-based threshold (older field = higher standards)
+        all_particles = particle_context["all_particles"]
+        avg_age = sum(p.position[5] for p in all_particles) / len(all_particles) if all_particles else 0
+        threshold = 0.93 + (particle_context["total_energy"] / 1000) + (avg_age * 0.001)
+        
+        # Age-weighted drift force (older particles resist change more)
+        my_age = self.position[5]  # a dimension
+        age_resistance = 1.0 / (1.0 + my_age * 0.1)  # Older = more resistant
+        
+        drift_force = [
+            (temporal_anchor[i] - self.position[i]) * 0.01 * age_resistance 
+            for i in range(12)
+        ]
+        
+        # Adaptive engine integration with experience weighting
+        adaptive_force = np.zeros(12)
+        if neighbors and self.adaptive_engine:
             for neighbor in neighbors:
                 if neighbor is self:
                     continue
-                # energy diffusion
-                energy_diff = (self.energy - neighbor.energy) * 0.05
-                self.energy -= energy_diff
-                neighbor.energy += energy_diff
+                    
+                # Experience differential (learned behavior)
+                age_diff = abs(my_age - neighbor.position[5])
+                experience_similarity = 1.0 / (1.0 + age_diff)  # Similar age = stronger interaction
+                
+                if hasattr(self.adaptive_engine, 'long_range_force'):
+                    force_vector = self.adaptive_engine.long_range_force(
+                        self.id, self.position,
+                        neighbor.id, neighbor.position,
+                        force_scale=0.05 * self.activation * experience_similarity
+                    )
+                    adaptive_force += force_vector
+                
+                # Experience-based energy exchange (wiser particles teach newer ones)
+                if my_age > neighbor.position[5]:  # I'm older
+                    teaching_bonus = min(0.002, (my_age - neighbor.position[5]) * 0.0001)
+                    self.energy += teaching_bonus  # Reward for teaching
+                    neighbor.activation += 0.003   # Student gets activation boost
+                elif my_age < neighbor.position[5]:  # I'm younger
+                    learning_bonus = min(0.002, (neighbor.position[5] - my_age) * 0.0001)
+                    self.activation += learning_bonus  # Reward for learning
+                    neighbor.energy += 0.001       # Teacher gets small energy boost
+        
+        # Combine forces with age-based weighting
+        self.velocity = np.array([
+            self.velocity[i] * 0.9 + adaptive_force[i] + drift_force[i]
+            for i in range(12)
+        ])
 
-
-        else:
-            attraction_force = [0.0] * 11
-
-        #combining behavior rules
-        self.velocity = [ 
-            self.velocity[i] * 0.9 + attraction_force[i] + drift_force[i]
-            for i in range(11)
-        ]
-
+    # Calculate dynamic temporal anchor based on particle field experience
+    def calculate_experiential_temporal_anchor(self, particle_context):
+        all_particles = particle_context["all_particles"]
+        if not all_particles:
+            return [0.0] * 12
+        
+        # Session start time (earliest particle creation)
+        session_start = min(p.position[3] for p in all_particles)  # w dimension
+        current_time = dt.datetime.now().timestamp()
+        session_duration = current_time - session_start
+        
+        # Average particle age (collective experience)
+        total_creation_time = sum(p.position[3] for p in all_particles)
+        avg_creation_time = total_creation_time / len(all_particles)
+        
+        # Experience weighting factor
+        experience_factor = session_duration / max(avg_creation_time - session_start, 1.0)
+        
+        # Create age-biased temporal anchor
+        temporal_anchor = [0.0] * 12
+        temporal_anchor[3] = avg_creation_time  # w: collective creation anchor
+        temporal_anchor[4] = current_time       # t: current time reference  
+        temporal_anchor[5] = session_duration   # a: session age anchor
+        
+        # Scale other dimensions by experience
+        for i in [0, 1, 2, 6, 7, 8, 9, 10]:  # spatial + emotional dimensions
+            temporal_anchor[i] = experience_factor * 0.1  # Gentle bias toward experienced center
+        
+        return temporal_anchor
 
     #determining particle HP 
     async def vitality_score(self):
@@ -236,7 +257,7 @@ class Particle:
 
     def distance_to(self, other):
         return math.sqrt(sum(
-            (self.position[i] - other.position[i]) ** 2 for i in range(11)
+            (self.position[i] - other.position[i]) ** 2 for i in range(12)
         ))
 
     async def color(self):
@@ -445,6 +466,40 @@ class Particle:
             }
         }
 
+
+    def calculate_consolidation_score(self, other_particle, distance):
+        """Calculate how suitable this particle is for consolidation with another"""
+        try:
+            # Base score from particle vitality
+            base_score = (self.energy + self.activation) / 2
+            
+            # Distance penalty (closer particles consolidate better)
+            distance_factor = 1.0 / (1.0 + distance)
+            
+            # Type compatibility bonus
+            same_type = getattr(self, 'type', None) == getattr(other_particle, 'type', None)
+            type_bonus = 1.2 if same_type else 1.0
+            
+            # Metadata similarity (if both have similar tags)
+            similarity_bonus = 1.0
+            if hasattr(self, 'metadata') and hasattr(other_particle, 'metadata'):
+                self_tags = set(self.metadata.get('tags', []))
+                other_tags = set(other_particle.metadata.get('tags', []))
+                if self_tags and other_tags:
+                    overlap = len(self_tags.intersection(other_tags))
+                    total = len(self_tags.union(other_tags))
+                    similarity_bonus = 1.0 + (overlap / max(total, 1)) * 0.5
+            
+            # Age factor (older particles consolidate less readily)
+            age_factor = 1.0
+            if hasattr(self, 'age'):
+                age_factor = 1.0 / (1.0 + self.age * 0.1)
+            
+            final_score = base_score * distance_factor * type_bonus * similarity_bonus * age_factor
+            return min(final_score, 1.0)  # Cap at 1.0
+            
+        except Exception as e:
+            return 0.1  # Default low score on error
 
 
 
