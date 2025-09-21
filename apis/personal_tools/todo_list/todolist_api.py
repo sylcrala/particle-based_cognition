@@ -41,4 +41,4 @@ class TodoList():
                 return task
         return None
     
-api.register_api("todo_list", TodoList(), permissions=["read", "write"], user_only=True)
+api.register_api("todo_list", TodoList(), user_only=True)

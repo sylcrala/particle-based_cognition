@@ -2,6 +2,7 @@
 /tests/
 /models/
 /logs/
+/archived/
 
 .venv/
 .pyc

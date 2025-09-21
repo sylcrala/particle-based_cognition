@@ -77,11 +77,12 @@ class ExternalResources:
             
         return list(synonyms)
 
-    def merge_synonyms(self, lexicon_store, threshold=0.85):
+    def merge_synonyms(self, threshold=0.85):
         """
         Merges lexicon terms that are strong synonym candidates based on external knowledge.
         Only suggests or merges if both terms are in the lexicon and meet similarity/confidence.
         """
+        lexicon_store = api.get_api("_agent_lexicon")
         if not lexicon_store:
             self.log("No lexicon store provided for synonym merging", "ERROR")
             return

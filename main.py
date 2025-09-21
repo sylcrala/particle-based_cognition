@@ -73,7 +73,6 @@ def launch_tui_terminal():
 
 async def main():
     """Main orchestrator for cognitive system + TUI"""
-    from apis.agent.loop import CognitionLoop
 
     print("Starting Persistence Toolkit, all systems initializing...")
     print("=" * 60)
@@ -123,6 +122,8 @@ async def main():
         except Exception as e:
             log_to_console(f"Error initializing cognition framework APIs: {e}", "ERROR", "main()")
             print(f"Error initializing cognition framework APIs: {e}")
+            import traceback
+            print(f"Full traceback:\n{traceback.format_exc()}")
             return
 
         print("=" * 60)
@@ -138,6 +139,8 @@ async def main():
         except Exception as e:
             log_to_console(f"Error during final agent initialization: {e}", "ERROR", "main()")
             print(f"Error during final agent initialization: {e}")
+            import traceback
+            print(f"Full traceback:\n{traceback.format_exc()}")
 
         log_to_console("Cognitive systems initialization complete", "SUCCESS", "main()")
         print("Main terminal ready for monitoring. Press Ctrl+C to exit gracefully.")
@@ -146,11 +149,15 @@ async def main():
             await agent_core.run() # starting cognition loop lastly to ensure console doesn't close
         except Exception as e:
             log_to_console(f"Error during final agent initialization: {e}", "ERROR", "main()")
-            print(f"Error during final agent initialization: {e}")
+            print(f"Error during final agent initialization: {e}")            
+            import traceback
+            print(f"Full traceback:\n{traceback.format_exc()}")
 
     except Exception as e:
         log_to_console(f"Error during cognitive systems initialization: {e}", "ERROR", "main()")
-        print(f"Error during cognitive systems initialization: {e}")
+        print(f"Error during cognitive systems initialization: {e}")            
+        import traceback
+        print(f"Full traceback:\n{traceback.format_exc()}")
 
 
 
