@@ -105,7 +105,7 @@ class EventHandler:
         """Handle particle creation events"""
         particle_data = event["data"]
         try:
-            self.field.spawn_particle(
+            await self.field.spawn_particle(
                 type=particle_data.get("type", "unknown"),
                 metadata=particle_data.get("metadata", {}),
                 energy=particle_data.get("energy", 0.5),

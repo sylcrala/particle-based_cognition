@@ -3,6 +3,7 @@ agent runtime loop (main async internal loop | essentially "run_agent()" from ru
 """
 
 import asyncio
+import random
 from apis.api_registry import api
 
 
@@ -144,7 +145,7 @@ class CognitionLoop:
                 
             # Get high-activation particles for conscious processing
             particles = self.field.get_all_particles()
-            active_particles = [p for p in particles if hasattr(p, 'activation') and p.activation > 0.7]
+            active_particles = [p for p in particles if p.id in self.field.alive_particles and p.activation > 0.6]
             
             # Process active particles (conscious attention)
             for particle in active_particles[:5]:  # Focus on top 5
@@ -207,15 +208,19 @@ class CognitionLoop:
             for particle in reflection_candidates[:3]:  # Process a few at a time
                 if hasattr(particle, 'learn_from_particle'):
                     await particle.learn_from_particle(particle)
+                    await self.meta_voice.reflect(particle)
                     particle.metadata["needs_reflection"] = False
+                    self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")
                     
         except Exception as e:
             self.log(f"Particle reflection processing error: {e}", level="ERROR", context="process_reflection_queue")
 
         try:
-            self.log("Processing generative reflection...", context="process_reflection_queue")
-            await self.meta_voice.reflect()
-            self.log("Generative reflection completed", context="process_reflection_queue")
+            chance = random.random()
+            if chance < 0.1575: # ~15.75% chance every cycle
+                self.log("Processing generative reflection...", context="process_reflection_queue")
+                await self.meta_voice.reflect()
+                self.log("Generative reflection completed", context="process_reflection_queue")
 
         except Exception as e:
             self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
