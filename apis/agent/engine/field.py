@@ -18,10 +18,10 @@ from apis.agent.utils.distance import batch_hyper_distance_matrix
 from apis.agent.cognition.particles.utils.particle_frame import category_to_identity_code, Particle
 from apis.agent.cognition.particles.lingual_particle import LingualParticle
 from apis.agent.cognition.particles.memory_particle import MemoryParticle
+from apis.agent.cognition.particles.sensory_particle import SensoryParticle
 
 
-
-MAX_PARTICLE_COUNT = 150
+MAX_PARTICLE_COUNT = 500
 
 class ParticleField:
     """
@@ -113,13 +113,11 @@ class ParticleField:
         Spawn a new particle with proper linkage tracking for cognitive mapping
         """
 
-
-
         try:
             # Check particle limit first
             if len(self.particles) >= MAX_PARTICLE_COUNT:
-                self.log(f"Skipping particle generation due to particle limit.", level="DEBUG", context="spawn_particle()")
-                return
+                self.log(f"Particle spawn triggered at limit - triggering particle pruning before continuing", level="DEBUG", context="spawn_particle()")
+                self.prune_low_value_particles()
             
             # Import particle types dynamically to avoid circular imports
             if type == "memory":
@@ -132,30 +130,55 @@ class ParticleField:
                     id=id, metadata=metadata, energy=energy,
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
+            elif type == "sensory":
+                particle = SensoryParticle(
+                    id=id, metadata=metadata, energy=energy,
+                    activation=activation, AE_policy=AE_policy, **kwargs
+                )
             else:
                 particle = Particle(
                     id=id, type=type, metadata=metadata, energy=energy,
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
             
-            # Track particle linkage for cognitive mapping
+            # Track particle linkage for cognitive mapping - ADD VALIDATION HERE
             if source_particle_id:
-                particle.linked_particles = {"source": source_particle_id}
-                # Also update the source particle to know about this child
+                # Validate that the source particle exists and is alive
                 source_particle = self.get_particle_by_id(source_particle_id)
-                if source_particle:
+                if source_particle and source_particle.alive and source_particle.id in self.alive_particles:
+                    # Valid linkage - proceed with linking
+                    particle.linked_particles = {"source": source_particle_id}
+                    
+                    # Also update the source particle to know about this child
                     if not hasattr(source_particle, 'linked_particles'):
                         source_particle.linked_particles = {}
                     if 'children' not in source_particle.linked_particles:
                         source_particle.linked_particles['children'] = []
-                    source_particle.linked_particles['children'].append(particle.id)
+                    
+                    # Prevent duplicate child entries
+                    if particle.id not in source_particle.linked_particles['children']:
+                        source_particle.linked_particles['children'].append(particle.id)
+                    
+                    # Add the linked_to attribute for visualization
+                    particle.linked_to = source_particle_id
+                    
+                    self.log(f"Successfully linked particle {particle.id} to source {source_particle_id}", 
+                            level="DEBUG", context="spawn_particle")
+                else:
+                    # Invalid source - spawn as orphan with warning
+                    self.log(f"Warning: Cannot link to non-existent or dead particle {source_particle_id}, spawning as orphan", 
+                            level="WARNING", context="spawn_particle")
+                    particle.linked_particles = {}
+                    particle.linked_to = None
+                    source_particle_id = None  # Clear for logging
             else:
                 particle.linked_particles = {}
-            
+                particle.linked_to = None
+
             # Add to field
             self.particles.append(particle)
             self.alive_particles.add(particle.id)
-            
+        
             # Add creation index for energy cost calculations
             particle.creation_index = self.creation_counter
             self.creation_counter += 1
@@ -186,12 +209,14 @@ class ParticleField:
             return particle
         except Exception as e:
             self.log(f"Error spawning particle: {e}", "ERROR", "spawn_particle")
+            import traceback
+            self.log(f"Spawn error traceback: {traceback.format_exc()}", "ERROR", "spawn_particle")
             return None
 
     async def seed_particles(self):
         if len(self.particles) == 0:
             self.log("[Seed] No particles detected at init — seeding with core particles.")
-            for i in range(5):
+            for i in range(random.randint(5, 20)):
                 await self.spawn_particle(
                     id=f"seed-{i}",
                     type="memory",
@@ -271,7 +296,7 @@ class ParticleField:
     def get_all_particles(self):
         """Return all active particles"""
         try:
-            particle_list = list(self.particles) if isinstance(self.particles, list) else self.particles
+            particle_list = [p for p in self.particles]
             return particle_list
         except Exception as e:
             self.log(f"Field monitoring error: {e}", level="ERROR", context="get_all_particles")
@@ -420,6 +445,15 @@ class ParticleField:
                 stats["by_type"][p.type] = stats["by_type"].get(p.type, 0) + 1
                 
         return stats
+    
+    def inject_action_sync(self, action, source=None, tags=None, context_id = None):
+        """Synchronous wrapper for inject_action to be used in non-async contexts"""
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If the loop is already running, create a new task
+            return asyncio.create_task(self.inject_action(action, source, tags, context_id))
+        else:
+            return loop.run_until_complete(self.inject_action(action, source, tags, context_id))
 
     async def inject_action(self, action, source=None, tags=None, context_id = None):
         """
@@ -453,7 +487,7 @@ class ParticleField:
 
                 # generate via meta voice
                 gen_source = "user_input" if source == "user_input" else source
-                response = self.voice.generate(str(action), source=gen_source, context_particles=particle.id, tags=tags or [], context_id=context_id if context_id else None)
+                response = await self.voice.generate(str(action), source=gen_source, context_particles=[particle], tags=tags or [], context_id=context_id if context_id else None)
 
             else:
                 self.log("Failed to create particle for action", "ERROR")
@@ -494,7 +528,9 @@ class ParticleField:
             try:
                 self.log("Particle update cycle initiated", "DEBUG", "continuous_particle_updates")
 
-                result = await self.update_particles()
+                await self.update_particles()
+
+                result = f"Alive particles: {len(self.alive_particles)}, Total particles: {len(self.particles)}"
                 self.log(f"Particle update result: {result}", "DEBUG", "continuous_particle_updates")
 
                 await asyncio.sleep(1.0)  # 1-second intervals for particle updates
@@ -616,7 +652,7 @@ class ParticleField:
             particle.velocity = np.array(particle.velocity) + adaptive_force
             
             # Energy regeneration: particles slowly recover energy over time
-            base_regen = 0.004  # Base regeneration rate
+            base_regen = 0.00475  # Base regeneration rate
             activation_bonus = particle.activation * 0.001  # Higher activation = faster regen
             particle.energy = min(1.0, particle.energy + base_regen + activation_bonus)
             
@@ -626,7 +662,7 @@ class ParticleField:
             elif particle.energy > 0.7:
                 particle.activation = min(1.0, particle.activation * 1.001)  # Slight boost at high energy
 
-            reproduction_chance = random.random() < particle.energy * particle.activation * 0.0005
+            reproduction_chance = random.random() < particle.energy * particle.activation * 0.00075
             if reproduction_chance and len(self.particles) < MAX_PARTICLE_COUNT:
                 # Spawn a child particle with slight variations
                 child_id = f"{particle.id}-child-{int(time())}-{random.randint(0,1000)}"
@@ -866,17 +902,15 @@ class ParticleField:
             # Restore particles
             for particle_data in field_state.get('particles_summary', []):
                 try:
-                    # Recreate particle based on type
-                    particle_type = particle_data.get('type', 'unknown')
-                    
                     # Spawn particle with restored state
                     restored_particle = await self.spawn_particle(
-                        id=particle_data['id'],
-                        type=particle_type,
+                        id=particle_data.get("id"),
+                        type=particle_data.get("type", "unknown"),
                         metadata=particle_data.get('metadata', {}),
-                        energy=particle_data.get('energy', 0.1),
-                        activation=particle_data.get('activation', 0.1),
+                        energy=particle_data.get('energy', 0.5),
+                        activation=particle_data.get('activation', 0.5),
                         AE_policy=particle_data.get('AE_policy'),
+                        position=np.array(particle_data.get('position')) if particle_data.get('position') else None,
                         emit_event=False  # Don't emit events during restoration
                     )
                     

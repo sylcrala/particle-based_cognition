@@ -4,7 +4,7 @@ from apis.api_registry import api
 class QuantumStateWidget(Static):
     def __init__(self):
         super().__init__("Quantum States - Monitoring...")
-        self.field_api = api.get_api("particle_field")
+        self.field_api = api.get_api("_agent_field")
     
     async def monitor_collapses(self):
         uncertain_particles = await self.field_api.get_uncertain_particles()

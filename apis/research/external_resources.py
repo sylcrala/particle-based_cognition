@@ -49,6 +49,12 @@ class ExternalResources:
             self.log(f"Error getting spaCy definition for {term}: {e}", "ERROR")
             return None
         
+    def classify_term(self, term):
+        from shared_services.spacy import classify_term
+        if not self.spacy_available:
+            self.log("spaCy not available for term classification", "WARNING")
+            return "unknown"
+        return classify_term(term)
 
     async def get_external_definitions(self, term):
         term_cleaned = re.sub(r"^[_#]+", "", term)

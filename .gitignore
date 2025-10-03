@@ -1,4 +1,5 @@
 /docs/
+/data/
 /tests/
 /models/
 /logs/
@@ -8,3 +9,7 @@
 .pyc
 __pycache__/
 
+data/agent/adaptive_shutdown_state.json
+data/agent/field_shutdown_state.json
+data/agent/memory_shutdown_state.json
+data/agent/memory_matrix.chromadb/chroma.sqlite3

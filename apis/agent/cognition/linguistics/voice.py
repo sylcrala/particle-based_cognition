@@ -8,6 +8,7 @@ import numpy as np
 import json
 from apis.api_registry import api
 from datetime import datetime as dt
+from apis.agent.utils.embedding import ParticleLikeEmbedding
 
 INTERNAL_SOURCE = "internal_dialogue"
 EXTERNAL_SOURCE = "external_dialogue"
@@ -50,6 +51,19 @@ class MetaVoice:
                     cascade_radius=0.7
                 )
                 self.log(f"User interaction triggered {len(collapse_log)} particle collapses")
+        else:
+            input_particle = await self.field.spawn_particle(
+                type="lingual",
+                metadata={
+                    "content": prompt,
+                    "source": input_source,
+                    "timestamp": time(),
+                    "processing_type": "internal"
+                },
+                energy=0.6,
+                activation=0.5,
+                emit_event=True
+            )
 
         # Score context particles with quantum awareness
         quantum_context = self.score_quantum_context_particles(prompt, context_particles or [])
@@ -58,7 +72,7 @@ class MetaVoice:
         try:
             response = await self.model_handler.generate(
                 str(prompt), 
-                context_id=str(uuid.uuid4()) or context_id, 
+                context_id=str(uuid.uuid4()) or str(context_id), 
                 tags=gentags,
                 max_new_tokens=max_tokens,
                 source=input_source
@@ -76,55 +90,125 @@ class MetaVoice:
                 if response_particle and hasattr(response_particle, 'update_superposition'):
                     response_particle.update_superposition(certainty_delta=0.3)
 
+            mem_key = f"voicegen_{str(uuid.uuid4())}"
+
             mem_entry = {
                 "input": prompt,
                 "response": response,
-                "context": quantum_context
+                "context": self.sanitize_context_particles(quantum_context)  # ✅ Sanitize context particles
             }
             
             if source == "user_input":
                 self.chat_history.append({"Misty": response, "timestamp": dt.now().timestamp()})
             else:
                 self.thoughts.append({"thought": response, "timestamp": dt.now().timestamp()})
-            
-            await self.memory_bank.update("conversation", mem_entry, [input_particle.id, response_particle.id], "voice generation", tags=gentags)
+
+            await self.memory_bank.update(key=mem_key, value=mem_entry, links=[str(input_particle.id), str(response_particle.id)], source_particle_id=str(input_particle.id), source="voice generation", tags=gentags, memory_type="conversation")
 
             return response
         except Exception as e:
             self.log(f"Generation error: {e}")
             return "[Error: Generation failed]"
+        
+    async def safe_get_particle_content(self, particle):
+        """Safely extract content from particle for reflection"""
+        try:
+            if hasattr(particle, 'get_content'):
+                content = await particle.get_content()
+            elif hasattr(particle, 'token'):
+                content = particle.token
+            elif hasattr(particle, 'content'):
+                content = particle.content
+            elif hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
+                content = particle.metadata.get('content', particle.metadata.get('token', ''))
+            else:
+                content = str(particle)
+            
+            # Ensure it's a string and not a complex object
+            if isinstance(content, (dict, list, tuple)):
+                return str(content)
+            return str(content) if content is not None else "empty content"
+            
+        except Exception as e:
+            self.log(f"Error extracting particle content: {e}")
+            return f"content extraction error: {str(e)}"
+    
+    def sanitize_context_particles(self, context_particles):
+        """Convert particle objects to serializable data"""
+        if not context_particles:
+            return []
+        
+        sanitized = []
+        for particle in context_particles:
+            try:
+                if hasattr(particle, '__class__') and 'Particle' in str(type(particle)):
+                    sanitized.append({
+                        'id': str(getattr(particle, 'id', 'unknown')),
+                        'content': str(getattr(particle, 'token', getattr(particle, 'content', ''))),
+                        'type': particle.__class__.__name__,
+                        'energy': float(getattr(particle, 'energy', 0.0)),
+                        'activation': float(getattr(particle, 'activation', 0.0)),
+                        'quantum_state': getattr(particle, 'quantum_state', 'uncertain')
+                    })
+                else:
+                    sanitized.append(str(particle))
+            except Exception as e:
+                self.log(f"Error sanitizing particle: {e}")
+                sanitized.append({'error': str(e), 'type': 'sanitization_failed'})
+        
+        return sanitized
 
-    def score_quantum_context_particles(self, input_text, context_particles, top_k=4):
+    def score_quantum_context_particles(self, input_text, context_particles: list, top_k=4):
         """Score context particles considering their quantum states"""
         if not context_particles:
             return []
             
+        if not isinstance(context_particles, (list, tuple)):
+            context_particles = [context_particles]
+
         scored_particles = []
         
+        try:
+            input_embedding = ParticleLikeEmbedding().encode([input_text])  # Pass as list!
+            if input_embedding:
+                input_embedding = input_embedding[0]  # Get first embedding
+        except Exception as e:
+            self.log(f"Error creating input embedding: {e}")
+            input_embedding = None
+        
         for particle in context_particles:
-            base_score = 1.0
-            
-            # Quantum state influence on scoring
-            if hasattr(particle, 'superposition'):
-                certainty = particle.superposition.get('certain', 0.5)
-                # Certain particles get higher base score
-                base_score *= (0.5 + certainty * 0.5)
+            try:
+                base_score = 1.0
                 
-            # Linkage influence
-            if hasattr(particle, 'linked_particles'):
-                linkage_count = len(particle.linked_particles.get('children', []))
-                base_score *= (1.0 + linkage_count * 0.1)
+                if hasattr(particle, 'superposition'):
+                    certainty = particle.superposition.get('certain', 0.5)
+                    # Certain particles get higher base score
+                    base_score *= (0.5 + certainty * 0.5)
+                    
+                if hasattr(particle, 'linked_particles'):
+                    linkage_count = len(particle.linked_particles.get('children', []))
+                    base_score *= (1.0 + linkage_count * 0.1)
+                    
+                if (hasattr(particle, 'embedding') and 
+                    particle.embedding is not None and 
+                    input_embedding is not None):
+                    
+                    try:
+                        particle_embedding = np.array(particle.embedding)
+                        input_embedding_array = np.array(input_embedding)
+                        
+                        if particle_embedding.size > 0 and input_embedding_array.size > 0:
+                            distance = np.linalg.norm(input_embedding_array - particle_embedding)
+                            relevance_score = 1 / (1 + distance)  # Closer means more relevant
+                            base_score *= relevance_score
+                    except Exception as embedding_error:
+                        self.log(f"Embedding comparison error: {embedding_error}")
                 
-            # Distance/relevance (existing logic)
-            if hasattr(particle, 'get_embedding') and particle.get_embedding():
-                input_embedding = api.call_api("model_handler", "embed_text", (input_text,))
-                particle_embedding = particle.get_embedding()
-                if input_embedding and particle_embedding:
-                    distance = np.linalg.norm(np.array(input_embedding) - np.array(particle_embedding))
-                    relevance_score = 1 / (1 + distance)  # Closer means more relevant
-                    base_score *= relevance_score            
-            
-            scored_particles.append((base_score, particle))
+                scored_particles.append((base_score, particle))
+                
+            except Exception as particle_error:
+                self.log(f"Error scoring particle {getattr(particle, 'id', 'unknown')}: {particle_error}")
+                continue
             
         # Sort by score and return top_k
         scored_particles.sort(key=lambda x: x[0], reverse=True)
@@ -135,66 +219,118 @@ class MetaVoice:
         try:
 
             # Create lingual particle for input processing
-            await self.field.spawn_particle(
-                type="lingual",
-                metadata={
-                    "content": text,
-                    "source": source or "unknown",
-                    "timestamp": time(),
-                    "processing_type": "input"
-                },
-                energy=0.7,
-                activation=0.8,
-                emit_event=True
-            )
+            particle = await self.spawn_and_learn_token(text, source="user_input")
 
             self.chat_history.append({"Tony": text, "timestamp": dt.now().timestamp()})
+
+            return particle
         except Exception as e:
             self.log(f"Input processing error: {e}")
+            return None
 
-    async def spawn_and_learn_token(self, token, source=None):
-        """Create and learn from token via particle field"""
+    async def spawn_and_learn_token(self, tokens, source=None):
+        """Create and learn from token via particle field - FIXED"""
         try:
+            # Convert tuple to string if needed
+            if isinstance(tokens, tuple):
+                tokens = ' '.join(str(token) for token in tokens if token)
+            
+            # Ensure overall msg (tokens) is a string
+            if not isinstance(tokens, str):
+                tokens = str(tokens)
 
-            if self.field:
-                # Spawn lingual particle for token
-                lp = await self.field.spawn_particle(
-                    type="lingual",
-                    metadata={
-                        "token": token,
-                        "source": source or "unknown",
-                        "timestamp": time()
-                    },
-                    energy=0.5,
-                    activation=0.6,
-                    emit_event=True
-                )
+            # FIXED: Proper string method usage and logic
+            # Check if tokens contain separators for splitting
+            separators = [" ", ",", "_", "-", ".", "!"]
+            should_split = any(sep in tokens for sep in separators)
+            
+            if should_split and len(tokens) > 10:  # Only split longer strings
+                # Split tokens by common separators
+                import re
+                token_list = re.split(r'[\s,._!-]+', tokens)
+                token_list = [t.strip() for t in token_list if t.strip()]  # Remove empty
                 
-                # Learn token if lexicon available
-                if self.lexicon_store and hasattr(lp, 'learn'):
-                    await lp.learn(token=token)
+                created_particles = []
+                for token in token_list[:5]:  # Limit to first 5 tokens
+                    if self.field and len(token) > 1:  # Skip single characters
+                        lp = await self.field.spawn_particle(
+                            type="lingual",
+                            metadata={
+                                "token": token,
+                                "content": token,
+                                "source": source or "unknown",
+                                "processing_type": "input" if source == "user_input" else "learning_token",
+                                "timestamp": time()
+                            },
+                            energy=0.3,
+                            activation=0.4,
+                            emit_event=False
+                        )
+                        
+                        # Learn token 
+                        if self.lexicon_store and lp and hasattr(lp, 'learn'):
+                            try:
+                                await lp.learn(token=token)
+                            except Exception as learn_error:
+                                self.log(f"Token learning error for '{token}': {learn_error}")
+                        
+                        if lp:
+                            created_particles.append(lp)
+                
+                return created_particles[0] if created_particles else None
+            
+            else:
+                # Single token processing
+                if self.field:
+                    lp = await self.field.spawn_particle(
+                        type="lingual",
+                        metadata={
+                            "token": tokens,
+                            "content": tokens,
+                            "source": source or "unknown",
+                            "processing_type": "input" if source == "user_input" else "learning_token",
+                            "timestamp": time()
+                        },
+                        energy=0.3,
+                        activation=0.4,
+                        emit_event=False
+                    )
                     
+                    # Learn token 
+                    if self.lexicon_store and lp and hasattr(lp, 'learn'):
+                        try:
+                            await lp.learn(token=tokens)
+                        except Exception as learn_error:
+                            self.log(f"Token learning error for '{tokens}': {learn_error}")
+
+                    return lp
+                        
+            return None
+                        
         except Exception as e:
             self.log(f"Token learning error: {e}")
+            import traceback
+            self.log(f"Full traceback:\n{traceback.format_exc()}")
+            return None
 
     async def reflect(self, particle=None):
         """Create reflection particle"""
         try:
-            context_id=str(uuid.uuid4())
             if not self.field or not self.model_handler:
                 return
             
+            chance = random.randint(0, 100) / 100
             if particle is None:
-                chance = random.randint(0, 100) / 100
-
+                
                 if chance < 0.4:
                     return  # 40% chance to skip reflection
 
                 elif chance >= 0.4 and chance < 0.5:
                     # Generate reflection
                     particle = await self.process_input("how i am.", source = "internal_reflection")
-                    reflection_prompt = f"I'm thinking about {str(particle.get_content())}"
-                    self.log(f"Reflecting on particle {particle.id}: {particle.get_content()}")
+                    safe_content = await self.safe_get_particle_content(particle)
+                    reflection_prompt = f"I'm thinking about {safe_content}"
+                    self.log(f"Reflecting on particle {particle.id}: {safe_content}")
 
 
                 elif chance >= 0.5 and chance < 0.6:
@@ -220,8 +356,10 @@ class MetaVoice:
                         self.log("No particle positions available for reflection OR unable to parse")
             
             else:
-                reflection_prompt = f"[Reflection] Reflecting on: {particle.get_content()}"
-                self.log(f"Reflecting on particle {particle.id}: {particle.get_content()}")
+                reflection_prompt = f"[Reflection] Reflecting on: {str(await particle.get_content())}"
+                self.log(f"Reflecting on particle {particle.id}: {str(await particle.get_content())}")
+
+            context_id=str(uuid.uuid4())
 
             reflection_response = await self.generate(
                     reflection_prompt,
@@ -244,19 +382,21 @@ class MetaVoice:
                 source_particle_id=particle.id,
                 emit_event=True
             )
-
-            await self.memory_bank.update(
-                    key=f"reflection:{uuid.uuid4()}",
-                    value=reflection_response,
-                    links=[(particle.id), (response_particle.id)] if particle else [(response_particle.id)],
-                    tags=["reflection", "internal"],
-                    source="internal_reflection",
-                    source_particle_id=response_particle.id
-                )
+            if chance < 0.15:
+                await response_particle.learn(reflection_response)
             
-            
-            
-                
+            try:
+                await self.memory_bank.update(
+                        key=f"reflection_{str(uuid.uuid4())}",
+                        value=reflection_response,
+                        links=[str(particle.id), str(response_particle.id)] if particle else [str(response_particle.id)],
+                        tags=["reflection", "internal"],
+                        source="internal_reflection",
+                        source_particle_id=str(response_particle.id)
+                    )
+            except Exception as e:
+                self.log(f"Memory update error: {e}")
         except Exception as e:
             self.log(f"Reflection error: {e}")
 
+ 

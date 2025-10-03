@@ -26,14 +26,16 @@ class SystemStats:
         if self.psutil_available:
             cpu_usage = psutil.cpu_percent(interval=0.1)
             memory_info = psutil.virtual_memory()
+            disk_used = shutil.disk_usage("/").used
+            disk_total = shutil.disk_usage("/").total
             
             return {
                 "cpu_usage": cpu_usage,
                 "memory_used": memory_info.used,
                 "memory_total": memory_info.total,
                 "memory_percent": memory_info.percent,
-                "disk_used": 0,  # Basic fallback
-                "disk_total": 0,
+                "disk_used": disk_used,
+                "disk_total": disk_total,
                 "timestamp": timestamp,
                 "status": "full_metrics"
             }

@@ -17,8 +17,10 @@ class EventHandler:
     def __init__(self, field = None, memory = None):
         self.event_queue = PriorityEventQueue()
         self.event_handlers = {}
+        self.initialized = False
         self.running = False
         self.event_loop_task = None
+        self.start_time = 0 
 
         self.field = field
         self.memory = memory
@@ -28,10 +30,7 @@ class EventHandler:
     
     def log(self, message, level="INFO", context=None):
         """Use shared logging system"""
-        if context is None:
-            context = "no_context"
-        else:
-            context = context
+        context = context or "no_context"
             
         if logger:
             logger.log(message, level, context, "EventHandler")
@@ -51,20 +50,40 @@ class EventHandler:
     
     async def emit_event(self, event_type, data, source="unknown", priority=None):
         """Emit an event with optional priority"""
-        event = {
-            "type": event_type,
-            "data": data,
-            "source": source,
-            "timestamp": time()
-        }
+        try:
+            event = {
+                "type": event_type,
+                "data": data,
+                "source": source,
+                "timestamp": time()
+            }
+            
+            # Set priority based on event type
+            if priority is None:
+                priority = self.get_default_priority(event_type, source)
+            
+            await self.event_queue.put(event, priority=priority)
+            self.log(f"Event emitted: {event_type} from {source}", "DEBUG", context="emit_event")
+            #return result
+        except Exception as e:
+            self.log(f"Error emitting event {event_type} from {source}: {e}", "ERROR", context="emit_event")
+            import traceback
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="emit_event")
+            return None
+    
+    async def get_events_by_type(self, event_type):
+        """Retrieve events of a specific type without removing them"""
+        return [event for _, _, event in self.event_queue._queue if event["type"] == event_type]
+    
+    def register_listener(self, event_type, callback, once=False):
+        """Register a callback for a specific event type"""
+        async def listener(event):
+            await callback(event)
+            if once:
+                self.event_handlers.pop(event_type, None)
         
-        # Set priority based on event type
-        if priority is None:
-            priority = self.get_default_priority(event_type, source)
-        
-        result = await self.event_queue.put(event, priority=priority)
-        self.log(f"Event emitted: {event_type} from {source}", "DEBUG")
-        return result
+        self.event_handlers[event_type] = listener
+        self.log(f"Listener registered for event type: {event_type}", "DEBUG", context="register_listener")
 
     def get_default_priority(self, event_type, source):
         """Get default priority for different event types"""
@@ -87,10 +106,17 @@ class EventHandler:
     
     async def handle_event(self, event):
         """Central event dispatcher"""
+        current_time = time()
+        if event["type"] != "user_input":
+            if hasattr(self, "start_time") and current_time - self.start_time < 5.0:
+                self.log("Skipping event handling during startup stabilization period", "DEBUG", context = "handle_event")
+                return None
+
+
         event_type = event["type"]
-        
-        self.log(f"Handling event: {event_type} from {event['source']}")
-        
+
+        self.log(f"Handling event: {event_type} from {event['source']}", context="handle_event")
+
         # Find and execute handler
         handler = self.event_handlers.get(event_type, self.handle_unknown_event)
         
@@ -98,9 +124,29 @@ class EventHandler:
             result = await handler(event)
             return result
         except Exception as e:
-            self.log(f"Error handling event {event_type}: {e}", "ERROR")
+            self.log(f"Error handling event {event_type}: {e}", "ERROR", context="handle_event")
+            import traceback
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_event")
             return None
     
+    def handle_event_sync(self, event):
+        """Syncronous event handler for thread-safe GUI"""
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+
+                future = asyncio.run_coroutine_threadsafe(
+                    self.handle_event(event),
+                    loop
+                )
+                return future.result(timeout=30.0)
+            except RuntimeError:
+                return asyncio.run(self.handle_event(event))
+        except Exception as e:
+            self.log(f"Sync event handling error: {e}", "ERROR", "handle_event_sync")
+            return f"Error: {e}"
+
+
     async def handle_particle_created(self, event):
         """Handle particle creation events"""
         particle_data = event["data"]
@@ -113,25 +159,28 @@ class EventHandler:
                 source_particle_id=particle_data.get("source_particle_id"),
                 emit_event=False  # Avoid recursive event emission
             )
-            self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}")
+            self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}", "DEBUG", context="handle_particle_created")
             return True
         except Exception as e:
-            self.log(f"Error creating particle: {e}", "ERROR")
+            self.log(f"Error creating particle: {e}", "ERROR", context="handle_particle_created")
+            import traceback
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_particle_created")
             return False
 
     
-    async def handle_user_input(self, event):
+    async def handle_user_input(self, event, source=None):
         """Handle user input events"""
         user_data = event["data"]
         
         # Check for shutdown commands
         if isinstance(user_data, str) and user_data.lower() in ("exit", "quit", "shutdown"):
             await self.emit_event("shutdown", {"reason": "user_request"}, source="user")
+            self.log("Shutdown command received from user input", "SYSTEM", "handle_user_input")
             return "Shutdown initiated"
         
         config = api.get_api("config")
-        if config and config.get("user_name"):
-            user_name = config.get("user_name")
+        if config and config.user_name:
+            user_name = config.user_name
         else:
             user_name = "Unknown User"
 
@@ -143,22 +192,24 @@ class EventHandler:
                 result = await field.inject_action(input_for_agent, source="user_input")
                 
                 if result:
-                    self.log(f"User input processed, response generated")
+                    self.log(f"User input processed, response generated: {result}", "DEBUG", context="handle_user_input")
                     return result
                 else:
-                    self.log("No response generated for user input", "WARNING")
+                    self.log("No response generated for user input", "WARNING", context="handle_user_input")
                     return "[System] No response available."
                     
             except Exception as e:
-                self.log(f"Error processing user input: {e}", "ERROR")
+                self.log(f"Error processing user input: {e}", "ERROR", context="handle_user_input")
+                import traceback
+                self.log(f"Full traceback:\n{traceback.format_exc()}")
                 return "[System] Error processing input."
         else:
-            self.log("No particle field available for user input", "ERROR")
+            self.log("No particle field available for user input", "ERROR", context="handle_user_input")
             return "[System] Cognitive system unavailable."
     
     async def handle_system_idle(self, event):
         """Handle system idle events for maintenance"""
-        self.log("System idle - performing maintenance", "DEBUG")
+        self.log("System idle - performing maintenance", "DEBUG", context="handle_system_idle")
         
         # Could trigger particle pruning, memory consolidation, etc.
         memory = self.memory
@@ -170,8 +221,8 @@ class EventHandler:
     async def handle_shutdown(self, event):
         """Handle shutdown events"""
         reason = event["data"].get("reason", "unknown")
-        self.log(f"Shutdown event received: {reason}", "SYSTEM")
-        
+        self.log(f"Shutdown event received: {reason}", "SYSTEM", context="handle_shutdown")
+
         # Trigger graceful shutdown through API registry
         api.handle_shutdown()
         
@@ -185,7 +236,7 @@ class EventHandler:
     async def handle_reflection(self, event):
         """Handle reflection events"""
         reflection_data = event["data"]
-        self.log(f"Reflection triggered: {reflection_data}")
+        self.log(f"Reflection triggered: {reflection_data}", "DEBUG", context="handle_reflection")
         
         # Could route to specialized reflection system
         # TODO
@@ -193,34 +244,34 @@ class EventHandler:
     
     async def handle_cognitive_event(self, event):
         """Handle general cognitive events"""
-        self.log(f"Cognitive event: {event['data']}")
+        self.log(f"Cognitive event: {event['data']}", "DEBUG", context="handle_cognitive_event")
         # TODO
         return True
     
     async def handle_unknown_event(self, event):
         """Handle unknown event types"""
-        self.log(f"Unknown event type: {event['type']}", "WARNING")
+        self.log(f"Unknown event type: {event['type']}", "WARNING", context="handle_unknown_event")
         # TODO
         return None
     
     def register_handler(self, event_type, handler):
         """Register a custom event handler"""
         self.event_handlers[event_type] = handler
-        self.log(f"Registered handler for event type: {event_type}")
+        self.log(f"Registered handler for event type: {event_type}", "DEBUG", context="register_handler")
     
     async def start_event_loop(self):
         """Start the main event processing loop"""
         self.running = True
-        self.log("Event handler started", "SYSTEM")
+        self.log("Event handler started", "SYSTEM", context="start_event_loop")
         
         try:
             while self.running:
                 event = await self.event_queue.get()
                 await self.handle_event(event)
         except asyncio.CancelledError:
-            self.log("Event loop cancelled - shutting down gracefully", "SYSTEM")
+            self.log("Event loop cancelled - shutting down gracefully", "SYSTEM", context="start_event_loop")
         except Exception as e:
-            self.log(f"Event loop error: {e}", "ERROR")
+            self.log(f"Event loop error: {e}", "ERROR", context="start_event_loop")
         finally:
             self.running = False
     
@@ -232,17 +283,21 @@ class EventHandler:
                 if self.running:
                     await self.emit_event("system_idle", {}, source="scheduler")
         except asyncio.CancelledError:
-            self.log("Idle scheduler cancelled", "DEBUG")
+            self.log("Idle scheduler cancelled", "DEBUG", context="start_idle_scheduler")
     
     async def initialize(self):
         """Initialize the event system with background tasks"""
+        self.initialized = False
         # Start event loop
         self.event_loop_task = asyncio.create_task(self.start_event_loop())
         
         # Start idle scheduler  
         self.idle_task = asyncio.create_task(self.start_idle_scheduler())
-        
-        self.log("Event handler initialized with background tasks", "SYSTEM")
+
+        await asyncio.sleep(2.0)  # Give tasks a moment to start
+        self.start_time = time()
+        self.initialized = True
+        self.log("Event handler initialized with background tasks", "SYSTEM", context="initialize")
     
     async def shutdown(self):
         """Graceful shutdown of event system"""
@@ -261,8 +316,8 @@ class EventHandler:
                 await self.idle_task
             except asyncio.CancelledError:
                 pass
-        
-        self.log("Event handler shutdown complete", "SYSTEM")
+
+        self.log("Event handler shutdown complete", "SYSTEM", context="shutdown")
 
 class PriorityEventQueue:
     """Priority queue for events using asyncio"""

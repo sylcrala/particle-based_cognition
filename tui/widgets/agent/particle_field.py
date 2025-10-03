@@ -9,12 +9,13 @@ from apis.api_registry import api
 class FieldVisualizerWidget(Static):
     def __init__(self):
         super().__init__("Particle Field - Status: Offline")
-        self.field_api = api.get_api("particle_field")
+        self.field_api = api.get_api("_agent_field")
         # proposed visualization:
         # x, y, z - Spatial
         # w - Temporal
         # f, v - Emotional
         # q - Certainty
+        self.logger = api.get_api("logger")
 
 
         self.render_cache = {}
@@ -26,9 +27,14 @@ class FieldVisualizerWidget(Static):
     def on_mount(self):
         self.set_interval(1.0, self.update_display)
 
+    def retry_api(self):
+        self.field_api = api.get_api("_agent_field")
+        self.logger.log("Particle Field API re-attempted", level="SYSTEM")
+
     async def update_display(self):
         if not self.field_api:
             self.update("❌ Particle Field API not available")
+            self.retry_api()
             return
             
         try:

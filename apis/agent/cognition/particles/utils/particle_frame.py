@@ -9,7 +9,7 @@ import uuid
 import datetime as dt
 import random
 import numpy as np
-
+from apis.agent.utils.embedding import ParticleLikeEmbedding
 from apis.api_registry import api
 
 
@@ -28,7 +28,6 @@ class Particle:
 
         self.metadata = metadata or {}
         if self.type == "memory":                                               ### CHANGE THIS -- have a set amount of memory particles auto-initiated on launch with a minimal schema establishing independent identity and distinguishing between potential users and mistral.
-            self.metadata.setdefault("key", f"mem-{str(self.id)[:8]}")
             self.metadata.setdefault("content", "")
             self.metadata.setdefault("created_at", dt.datetime.now().timestamp())
         
@@ -57,6 +56,9 @@ class Particle:
 
         self.last_updated = 0
 
+        self.phase_vector = self.get_phase_vector()
+
+
         self.position = np.array([
             x := random.uniform(0, 1),   # x (length)
             y := random.uniform(0, 1),   # y (width)
@@ -69,9 +71,9 @@ class Particle:
             v := random.uniform(-1, 1),  # v (valence)
             i := self.type_id,           # i (categorical identity code)
             n := random.uniform(0, 1),   # n (intent)
+            #p := self.phase_vector       # p (circadian phase vector)
         ])
 
-        self.phase_vector = self.get_phase_vector()
         self.position = np.concatenate((self.position[:10], np.array(self.phase_vector)))           # adding 12th dimension: phase vector based on circadian phase; see get_phase_vector() below
         
         self.extra_params = kwargs
@@ -140,12 +142,57 @@ class Particle:
             self.activation *= 0.95
 
     def _message_to_vector(self, msg): 
-        if not msg or not isinstance(msg, str):
-            msg = "[[NULL]]"
-        seed = sum(ord(c) for c in msg)
-        random.seed(seed)
-        return [random.uniform(-1, 1) for _ in range(12)]
+        try:
+            if not msg:
+                msg = "<empty>"  
 
+            embedding_provider = ParticleLikeEmbedding()
+            embedding_result = embedding_provider.encode([msg])
+            
+            if embedding_result and len(embedding_result) > 0:
+                embedding = embedding_result[0]
+
+                if isinstance(embedding, list):
+                    embedding = np.array(embedding, dtype=np.float32)
+                
+                if len(embedding) != 12:
+                    embedding = embedding[:12] if len(embedding) > 12 else np.pad(embedding, (0, 12 - len(embedding)), 'constant')
+            else:
+                # Fallback to deterministic generation
+                seed = sum(ord(c) for c in msg)
+                random.seed(seed)
+                vector = [random.uniform(-1, 1) for _ in range(12)]
+                return np.array(vector, dtype=np.float32)        
+            
+            return embedding
+                  
+        except Exception as e:
+            # Log error and fallback to deterministic generation
+            print(f"Embedding generation error in particle: {e}")
+            seed = sum(ord(c) for c in msg)
+            random.seed(seed)
+            vector = [random.uniform(-1, 1) for _ in range(12)]
+            return np.array(vector, dtype=np.float32)
+        
+    def _cosine_similarity(self, vec1, vec2):
+        """Compute cosine similarity between two vectors"""
+        try:
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+            
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            magnitude1 = sum(a * a for a in vec1) ** 0.5
+            magnitude2 = sum(b * b for b in vec2) ** 0.5
+            
+            if magnitude1 == 0 or magnitude2 == 0:
+                return 0.0
+            
+            return dot_product / (magnitude1 * magnitude2)
+        
+        except Exception as e:
+            self.log(f"Error computing cosine similarity: {e}", "ERROR", "_cosine_similarity")
+            return 0.0
+        
     async def adjust_behavior(self, neighbors, temporal_anchor, particle_context):
         # Calculate experiential temporal anchor
         temporal_anchor = self.calculate_experiential_temporal_anchor(particle_context)
@@ -261,7 +308,6 @@ class Particle:
         ))
 
     async def color(self):
-        ptype = self.type
         if self.type == "core": #black
             r, g, b = 0, 0, 0
         elif self.type == "sensory":
@@ -290,8 +336,11 @@ class Particle:
     def get_key(self):
         return self.metadata.get("key", f"unknown-{self.id}")
     
-    def get_content(self):
-        return self.metadata.get("content", "")
+    async def get_content(self):
+        result = self.metadata.get("content", "")
+        if not result and self.type == "lingual":
+            result = self.metadata.get("token", "")
+        return result
     
     def should_update_policy(self):
         # default: do not update policy
@@ -311,7 +360,8 @@ class Particle:
                 mood=self.get_circadian_phase()
             )
             return new_policy
-        return self.metadata.get("AE_policy")
+        else:
+            return self.metadata.get("AE_policy")
     
     def infer_policy(self):
         if self.metadata.get("locked_policy", False):
@@ -428,20 +478,45 @@ class Particle:
         shimmer_rate = (1 - certainty) * 5  # More uncertain = faster shimmer
         return (current_time * shimmer_rate) % 1 < 0.5
 
-    def render_particle(self):
+    def render_particle(self, dim_mapping = None, normalize = True):
+        """
+        Render the particle for 3D visualization of any given set of the 12 dimensions
+
+        Args:
+            dim_mapping: Dict specifying which dimensions to use for x,y,z axes
+                        Example: {'x': 0, 'y': 1, 'z': 2} for default mapping
+                        Can use any of the 12 dimensions
+            normalize: Whether to normalize values for visualization
+        
+        Returns:
+            dictionary with visualization properties
+        """
+        
         current_time = dt.datetime.now().timestamp()
         
-        # spatial + temporal base (3D + time)
-        pos_3d = self.position[:3]
+        if dim_mapping is None:
+            dim_mapping = {"x": 0, "y": 1, "z": 2}  # Default spatial mapping
+        else:
+            dim_mapping = dim_mapping
+
+        # extracting mapped dims
+        pos_3d = [
+            self._get_normalized_dimension(dim_mapping.get("x", 0), normalize),
+            self._get_normalized_dimension(dim_mapping.get("y", 1), normalize),
+            self._get_normalized_dimension(dim_mapping.get("z", 2), normalize)
+        ]
+        
+        # calculating age
         age = current_time - self.position[3]
 
-        # emotional (2D -> visual representation)
+        # emotional dimensions
         freq = self.position[6]
         valence = self.position[8]
 
         # pseudo-quantum state
         certainty = self.superposition['certain']
 
+        # get particle entanglements
         entanglements = []
         for linked_id in self.linked_particles.get("children", []):
             entanglements.append({
@@ -450,9 +525,28 @@ class Particle:
                 "type": 'parent_child'
             })
 
+        # get dim names for labeling
+        dimension_names = [
+            "Length (x)", "Width (y)", "Height (z)", 
+            "Creation Time (w)", "Current Time (t)", "Age (a)",
+            "Frequency (f)", "Memory Phase (m)", "Valence (v)",
+            "Identity (i)", "Intent (n)", "Circadian Phase"
+        ]
+
+        # include dim mapping info in result
+        dimension_info = {
+            "mapping": {
+                "x": dimension_names[dim_mapping.get("x", 0)],
+                "y": dimension_names[dim_mapping.get("y", 1)],
+                "z": dimension_names[dim_mapping.get("z", 2)]
+            },
+            "raw_indices": dim_mapping
+        }
+
         return {
             'type': self.type,  # Include particle type for visualization
             'position': pos_3d,
+            'dimensions': dimension_info,
             'size': self.age_to_size(age),
             'pulse_rate': abs(freq),
             'color_hue': self.valence_to_hue(valence),
@@ -465,6 +559,104 @@ class Particle:
                 'collapse_indicator': self.collapsed_state is not None
             }
         }
+
+    def _get_normalized_dimension(self, dim_index, normalize = True):
+        value = self.position[dim_index] if dim_index < len(self.position) else 0
+        current_time = dt.datetime.now().timestamp()
+
+    
+        if not normalize:
+            return value
+            
+        # Apply normalization based on dimension type
+        if dim_index in [0, 1, 2]:  # Spatial dimensions
+            return value  # Already normalized in [0,1] range
+        elif dim_index in [3, 4]:  # Temporal dimensions (timestamps)
+            # Normalize to [-1,1] based on session duration
+            if self.field and hasattr(self.field, 'creation_time'):
+                session_duration = current_time - self.field.creation_time
+                return 2 * ((value - self.field.creation_time) / max(session_duration, 1)) - 1
+            return 0
+        elif dim_index == 5:  # Age
+            # Normalize age to [0,1] with logarithmic scale
+            # 1 hour = 0.5, 1 day = 0.8, 1 week = 1.0
+            return min(math.log10(1 + value/3600) / math.log10(168), 1.0)
+        elif dim_index in [6, 8]:  # Already in [-1,1] range
+            return value
+        elif dim_index == 7:  # Memory phase [0,1]
+            return value
+        elif dim_index == 9:  # Identity code [0,1]
+            return value
+        elif dim_index == 10:  # Intent [0,1]
+            return value
+        else:  # Phase vector
+            # Map to [-1,1] range
+            return min(max(value, -1), 1)
+
+    async def create_linked_particle(self, particle_type, content, relationship_type="triggered"):
+        """Create a new particle linked to this lingual particle"""
+
+        metadata = {
+            "content": content,
+            "triggered_by": self.id,
+            "relationship": relationship_type,
+            "source": f"{self.type}_particle_creation"
+        }
+        
+        # Inherit some quantum state from parent
+        if hasattr(self, 'superposition'):
+            # New particle starts with some uncertainty from parent
+            energy = 0.5 + (self.superposition['certain'] * 0.3)
+            activation = 0.4 + (self.superposition['certain'] * 0.2)
+        else:
+            energy = 0.5
+            activation = 0.4
+            
+        return await self.field.spawn_particle(
+            type=particle_type,
+            metadata=metadata,
+            energy=energy,
+            activation=activation,
+            source_particle_id=self.id,  # Creates genealogy linkage
+            emit_event=True
+        )
+    
+    def calculate_connection_strength(self, linked_id):
+        """Calculate a score representing the strength of connection to a linked particle"""
+        if not self.field:
+            return 0.0
+        
+        linked_particle = self.field.get_particle_by_id(linked_id)
+        if not linked_particle:
+            return 0.0
+        
+        try:
+            # Base score from vitality
+            base_score = (self.energy + self.activation) / 2
+            
+            # Distance factor (closer particles have stronger connections)
+            distance = self.distance_to(linked_particle)
+            distance_factor = 1.0 / (1.0 + distance)
+            
+            # Type compatibility bonus
+            same_type = self.type == linked_particle.type
+            type_bonus = 1.2 if same_type else 1.0
+            
+            # Metadata similarity (if both have similar tags)
+            similarity_bonus = 1.0
+            if hasattr(self, 'metadata') and hasattr(linked_particle, 'metadata'):
+                self_tags = set(self.metadata.get('tags', []))
+                linked_tags = set(linked_particle.metadata.get('tags', []))
+                if self_tags and linked_tags:
+                    overlap = len(self_tags.intersection(linked_tags))
+                    total = len(self_tags.union(linked_tags))
+                    similarity_bonus = 1.0 + (overlap / max(total, 1)) * 0.5
+            
+            final_score = base_score * distance_factor * type_bonus * similarity_bonus
+            return min(final_score, 1.0)  # Cap at 1.0
+            
+        except Exception as e:
+            return 0.1  # Default low score on error
 
 
     def calculate_consolidation_score(self, other_particle, distance):

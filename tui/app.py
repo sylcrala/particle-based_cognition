@@ -383,6 +383,9 @@ class MainApp(App):
         self.update_timer = None
         self.last_log_count = 0
 
+        self.agent_task = None
+        self.agent_core = None
+
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -409,12 +412,27 @@ class MainApp(App):
         
         yield Footer()
 
+    async def agent_check(self):
+        try:
+            agent_instance = api.get_api("agent")
+
+            if agent_instance:
+                self.logger.log("Agent instance found and linked to TUI", "SYSTEM", "tui_startup", "MainApp")   
+                self.agent_core = agent_instance
+
+        except Exception as e:
+            self.logger.log(f"Error checking agent instance: {e} | Retrying in 30 seconds", "ERROR", "tui_startup", "MainApp")
+            self.agent_core = None
+
 
     async def on_mount(self):
         # Start log monitoring
         if self.logger:
             self.set_interval(0.5, self.update_system_logs)
-        
+
+        # Scan for agent instance
+        self.set_interval(30, self.agent_check)
+
         # Initialize the messages tab with welcome message
         try:
             messages_display = self.query_one("#messages", RichLog)
@@ -521,9 +539,17 @@ class MainApp(App):
             self.notify(f"Error switching content: {e}")
 
 
-    def on_unmount(self):
+    async def on_unmount(self):
         try:
-            asyncio.run(api.handle_shutdown())
+            if self.agent_core and self.agent_task:
+                self.agent_task.cancel()
+                try:
+                    await self.agent_task
+                except asyncio.CancelledError:
+                    pass
+
+            await api.handle_shutdown()
+        
         except Exception as e:
             if self.logger:
                 self.logger.log(f"Error during shutting down Cognition Framework: {e}", "ERROR", "tui_shutdown", "MainApp")

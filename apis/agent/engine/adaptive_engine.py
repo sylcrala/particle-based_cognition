@@ -200,72 +200,178 @@ class AdaptiveDistanceEngine:
     
     def save_learning_state(self):
         """
-        Save adaptive learning state during graceful shutdown
+        Save adaptive learning state during graceful shutdown - FIXED VERSION
         """
         try:
             import json
+            import traceback
+            now = dt.now().isoformat()
             
-            learning_state = {
-                "timestamp": dt.now().isoformat(),
-                "total_embeddings": len(self.embeddings),
-                "total_interactions": len(self.memory),
-                "active_policies": len(set(self.policies.values())),
-                "policy_distribution": {}
+            # Proper policy counting
+            policy_counts = {}
+            policy_types = {}
+            
+            for node_id, policy in self.policies.items():
+                # Convert lambda functions to string representations
+                if callable(policy):
+                    policy_name = getattr(policy, '__name__', 'lambda_function')
+                    if policy_name == '<lambda>':
+                        # Try to identify the strategy type
+                        policy_str = str(policy)
+                        if 'emergent' in policy_str:
+                            policy_name = 'emergent'
+                        elif 'social' in policy_str:
+                            policy_name = 'social'
+                        else:
+                            policy_name = 'custom_lambda'
+                else:
+                    policy_name = str(policy)
+                
+                # Count policy usage
+                policy_counts[policy_name] = policy_counts.get(policy_name, 0) + 1
+                policy_types[str(node_id)] = policy_name
+
+            # Safe interaction sampling
+            recent_interactions = []
+            if self.memory:
+                try:
+                    # Convert interaction keys to serializable format
+                    interaction_items = list(self.memory.items())[-100:]  # Last 100
+                    for key, score in interaction_items:
+                        recent_interactions.append({
+                            'participants': list(key) if isinstance(key, tuple) else [str(key)],
+                            'score': float(score),
+                            'interaction_type': 'particle_interaction'
+                        })
+                except Exception as interaction_error:
+                    self.log(f"Error processing interactions: {interaction_error}", "WARNING", "save_learning_state")
+                    recent_interactions = []
+
+            # Safe embedding processing
+            embedding_stats = {
+                'total_count': len(self.embeddings),
+                'node_ids': list(self.embeddings.keys())[:50],  # Sample of IDs
+                'dimension_info': {}
             }
             
-            # Count policy usage
-            for policy in self.policies.values():
-                learning_state["policy_distribution"][policy] = learning_state["policy_distribution"].get(policy, 0) + 1
-            
-            # Save interaction statistics
-            if self.memory:
-                recent_interactions = list(self.memory)[-100:]  # Last 100 interactions
-                learning_state["recent_interaction_sample"] = len(recent_interactions)
-            
-            # Save to file
+            if self.embeddings:
+                try:
+                    first_embedding = next(iter(self.embeddings.values()))
+                    if hasattr(first_embedding, 'shape'):
+                        embedding_stats['dimension_info'] = {
+                            'shape': list(first_embedding.shape),
+                            'dtype': str(first_embedding.dtype)
+                        }
+                except Exception as embed_error:
+                    self.log(f"Error processing embedding stats: {embed_error}", "WARNING", "save_learning_state")
+
+            learning_state = {
+                "timestamp": now,
+                "mode": self.mode,
+                "lambda_blend": float(self.lambda_blend),
+                "base_metric": getattr(self.base_metric_fn, '__name__', 'unknown'),
+                "embedding_stats": embedding_stats,
+                "interaction_stats": {
+                    "total_interactions": len(self.memory),
+                    "unique_pairs": len(set(self.memory.keys())),
+                    "average_score": sum(self.memory.values()) / len(self.memory) if self.memory else 0.0
+                },
+                "policy_stats": {
+                    "active_policies": len(set(policy_counts.keys())),
+                    "policy_distribution": policy_counts,
+                    "node_policy_mapping": policy_types
+                },
+                "recent_interactions": recent_interactions,
+                "system_health": {
+                    "memory_size": len(self.memory),
+                    "embeddings_size": len(self.embeddings),
+                    "policies_size": len(self.policies)
+                }
+            }
+
+            # Safe file operations
             state_file = "./data/agent/adaptive_shutdown_state.json"
             os.makedirs(os.path.dirname(state_file), exist_ok=True)
             
-            with open(state_file, 'w') as f:
-                json.dump(learning_state, f, indent=2)
+            # Write to temporary file first, then rename (atomic operation)
+            temp_file = state_file + ".tmp"
+            with open(temp_file, 'w') as f:
+                json.dump(learning_state, f, indent=2, default=str)
             
-            self.log(f"Adaptive learning state saved: {learning_state['total_embeddings']} embeddings, {learning_state['total_interactions']} interactions", 
+            # Atomic rename
+            os.replace(temp_file, state_file)
+            
+            self.log(f"Adaptive learning state saved successfully: {embedding_stats['total_count']} embeddings, {len(self.memory)} interactions, {len(policy_counts)} policy types", 
                     level="INFO", context="save_learning_state")
+            
+            return True
             
         except Exception as e:
             self.log(f"Error saving learning state: {e}", level="ERROR", context="save_learning_state")
-    
-    def restore_learning_state(self):
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "DEBUG", "save_learning_state")
+            return False
+
+    async def restore_learning_state(self):
         """
-        Restore adaptive learning state from previous session
+        Restore adaptive learning state from previous session - ENHANCED VERSION
         """
         try:
             state_file = "./data/agent/adaptive_shutdown_state.json"
             
-            if os.path.exists(state_file):
-                with open(state_file, 'r') as f:
-                    learning_state = json.load(f)
-                
-                # Log restoration info
-                self.log(f"Restoring learning state from: {learning_state.get('timestamp')}", 
-                        level="INFO", context="restore_learning_state")
-                
-                # Note: embeddings and interaction history are already persistent in memory
-                # This method mainly serves to log the restoration and validate state
-                
-                restored_embeddings = learning_state.get('total_embeddings', 0)
-                restored_interactions = learning_state.get('total_interactions', 0)
-                
-                self.log(f"Learning state restored: {restored_embeddings} embeddings, {restored_interactions} interactions available", 
-                        level="INFO", context="restore_learning_state")
-                
-                return True
-            else:
+            if not os.path.exists(state_file):
                 self.log("No previous learning state found, starting fresh", level="INFO", context="restore_learning_state")
-                return False
+                return True
+            
+            if os.path.getsize(state_file) == 0:
+                self.log("State file exists but is empty, starting fresh", level="WARNING", context="restore_learning_state")
+                return True
+            
+            with open(state_file, 'r') as f:
+                learning_state = json.load(f)
+            
+            # Restore system configuration
+            restored_timestamp = learning_state.get('timestamp', 'unknown')
+            self.log(f"Restoring adaptive learning state from: {restored_timestamp}", 
+                    level="INFO", context="restore_learning_state")
+            
+            # Restore mode and blend settings if they match
+            saved_mode = learning_state.get('mode')
+            if saved_mode and saved_mode != self.mode:
+                self.log(f"Mode mismatch: current={self.mode}, saved={saved_mode}", 
+                        level="WARNING", context="restore_learning_state")
+            
+            # Restore policy mappings where possible
+            if 'policy_stats' in learning_state:
+                policy_mapping = learning_state['policy_stats'].get('node_policy_mapping', {})
+                restored_policies = 0
                 
+                for node_id, policy_name in policy_mapping.items():
+                    if node_id not in self.policies:  # Don't override existing policies
+                        try:
+                            # Try to restore strategy from name
+                            if policy_name in self.strategies:
+                                self.policies[node_id] = self.strategies[policy_name]
+                                restored_policies += 1
+                        except Exception as policy_error:
+                            self.log(f"Could not restore policy {policy_name} for node {node_id}: {policy_error}", 
+                                    level="DEBUG", context="restore_learning_state")
+                
+                if restored_policies > 0:
+                    self.log(f"Restored {restored_policies} policy mappings", 
+                            level="INFO", context="restore_learning_state")
+            
+            # Log restoration summary
+            embedding_count = learning_state.get('embedding_stats', {}).get('total_count', 0)
+            interaction_count = learning_state.get('interaction_stats', {}).get('total_interactions', 0)
+            policy_count = learning_state.get('policy_stats', {}).get('active_policies', 0)
+            
+            self.log(f"Learning state restoration completed: {embedding_count} embeddings, {interaction_count} interactions, {policy_count} policy types available", 
+                    level="INFO", context="restore_learning_state")
+            
+            return True
+            
         except Exception as e:
             self.log(f"Error restoring learning state: {e}", level="ERROR", context="restore_learning_state")
+            import traceback
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "DEBUG", "restore_learning_state")
             return False
-
-

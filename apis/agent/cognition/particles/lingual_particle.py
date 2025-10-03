@@ -24,45 +24,17 @@ class LingualParticle(Particle):
         self.embedding = self._message_to_vector(self.token)   # embedded vector for message
 
         
-        self.lexicon_id = self.lexicon_store.get_term_id(self.token)
+        self.lexicon_id = None
 
-        self.particle_source = None                                                   # particle injection source
+        self.particle_source = None                                                     # particle injection source
 
-        self.definition = self.lexicon_store.get_term_def(self.token)                  # token's stored definition if available
+        self.definition = None                                                          # token's stored definition if available
         self.usage_count = 0                                                            # how often the token is seen or used
-        self.category = self.lexicon_store.get_term_type(self.token)             # token's stored semantic class
+        self.category = None                                                            # token's stored semantic class
         #self.enrichment_sources = self.lexicon_store.get_term_sources(self.token)      # overall list of sources used
 
         self.tokenizer = api.get_api("_agent_model_handler").tokenizer
 
-
-    async def create_linked_particle(self, particle_type, content, relationship_type="triggered"):
-        """Create a new particle linked to this lingual particle"""
-
-        metadata = {
-            "content": content,
-            "triggered_by": self.id,
-            "relationship": relationship_type,
-            "source": "lingual_particle_creation"
-        }
-        
-        # Inherit some quantum state from parent
-        if hasattr(self, 'superposition'):
-            # New particle starts with some uncertainty from parent
-            energy = 0.5 + (self.superposition['certain'] * 0.3)
-            activation = 0.4 + (self.superposition['certain'] * 0.2)
-        else:
-            energy = 0.5
-            activation = 0.4
-            
-        return await self.field.spawn_particle(
-            type=particle_type,
-            metadata=metadata,
-            energy=energy,
-            activation=activation,
-            source_particle_id=self.id,  # Creates genealogy linkage
-            emit_event=True
-        )
 
     async def trigger_memory_formation(self, content, importance=0.5):
         """Trigger creation of a memory particle from this lingual particle"""
@@ -98,18 +70,23 @@ class LingualParticle(Particle):
 
         self.log(f"triggering generation for external particle: {self.particle.id}", source = "LingualParticle", context = "generate_expression_from_particle()")
 
+        if not await self.sync_data():
+            self.log(f"[Generate] Sync failed; skipping generation for token: {self.token}", source="LingualParticle", context="generate_expression_from_particle()")
+            return None
+
         if context_particles:
             for p in context_particles:
                 if hasattr(p, "importance") and p.importance > 0.8:
                     tokens.append(f"({p.metadata.get('summary', '')})")
-
 
         if self.tokenizer:
             output = self.tokenizer.convert_tokens_to_string(tokens)
         else:
             output = " ".join(tokens)
 
-        
+        for token in tokens:
+            await self.learn(token, context_particles)            
+
         # self.learn(output, tokens, context_particles)  --- deprecated call; moving to dedicated reflection queue for downtime
         await self.lexicon_store.add_term(output, tokens, context_particles)
         return output
@@ -126,16 +103,25 @@ class LingualParticle(Particle):
                     "bias": ip.metadata.get("bias", "neutral"),
                     "energy": ip.energy
                 })
+                
+    async def sync_data(self):
+        try:
+            self.definition = await self.lexicon_store.get_term_def(self.token)
+            self.category = self.lexicon_store.get_term_type(self.token)
+            self.lexicon_id = await self.lexicon_store.get_term_id(self.token)
+            return True
+        except Exception as e:
+            self.log(f"Error syncing data for token {self.token}: {e}", source="LingualParticle", context="sync_data()", level="ERROR")
+            return False
 
-
-    def initialize_context_profile(self, token=None, context=None):
+    async def initialize_context_profile(self, token=None, context=None):
         token = token or self.token
         context = context or []
 
         if not token:
             return False  
         try:
-            self.lexicon_id = self.lexicon_store.get_term_id(token)
+            self.lexicon_id = await self.lexicon_store.get_term_id(token)
         except Exception as e:
             self.log(f"Unable to initialize context profile; skipping for {str(self.id)} | {e}", source="LingualParticle", context="initialize_context_profile()", level="ERROR")
             return
@@ -155,18 +141,24 @@ class LingualParticle(Particle):
         Learns about the current token by defining, classifying, and storing it.
         Stores information in the lexicon and logs memory events.
         """
-        token = token or self.token
+        token = str(token) or str(self.token)
         context = context or [self.expression] if self.expression else []
+        now = datetime.now().timestamp()
 
         if not token or not isinstance(token, str) or token.strip() == "":
             self.log(f"[Learn] Skipping invalid token: {token}", source="LingualParticle", context="learn()")
             return
-
-        if not self.initialize_context_profile(token, context):
+        
+        if not await self.sync_data():
+            self.log(f"[Learn] Sync failed; skipping learning for token: {token}", source="LingualParticle", context="learn()")
             return
 
+        #if not await self.initialize_context_profile(token, context):
+        #   self.log(f"[Learn] Initialization failed; skipping learning for token: {token}", source="LingualParticle", context="learn()")
+        #    return
+
         # Skip if already well-defined
-        if api.call_api("lexicon_store", "has_deep_entry", (token)):
+        if self.lexicon_store.has_deep_entry(token):
             self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
             return
 
@@ -195,7 +187,7 @@ class LingualParticle(Particle):
         source_str = ", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
         await self.memory_bank.link_token(token, definition, source_str)
 
-        await self.memory_bank.update(f"learn-{token}-{int(time.time())}", f"[Lexical Learn] Learned: '{token}' with classification {classified}")
+        await self.memory_bank.update(f"learn-{token}-{int(now)}", f"[Lexical Learn] Learned: '{token}' with classification {classified}")
 
         self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
 
@@ -204,15 +196,17 @@ class LingualParticle(Particle):
         text = self.expression
         tone = particle.traits.get("tone")
         origin = particle.traits.get("origin")
+        now = datetime.now().timestamp()
 
         context = {text, tone, origin}
 
+        text = str(text)
 
         tokens = text.split()
         
 
         for token in tokens: 
-            if token not in self.lexicon_store.lexicon or self.lexicon_store.get_term_def(token) == Exception:
+            if token not in self.lexicon_store.lexicon or await self.lexicon_store.get_term_def(token) == Exception:
                 classified = api.call_api("external_resources", "classify_term", (token, context))
                 definition, sources = await self.define_term(token, tokens)
 
@@ -237,7 +231,7 @@ class LingualParticle(Particle):
 
 
         await self.memory_bank.update(
-            key=f"learn-{int(time.time())}",
+            key=f"learn-{int(now)}",
             value=f"I learned {len(tokens)} new terms.",
             persistent=True
         )
@@ -260,7 +254,7 @@ class LingualParticle(Particle):
 
 
     def compare_and_merge_definitions(self, def_dict):
-        ranked_defs = sorted(def_dict.items(), key=lambda item: len(item[1] or ""), reverse=True)
+        ranked_defs = sorted(def_dict, key=lambda item: len(item[1] or ""), reverse=True)
         sources_used = {k: v for k, v in ranked_defs if v}
         if not sources_used:
             return None, {}
@@ -273,8 +267,9 @@ class LingualParticle(Particle):
         context = classification.get("context", "learn")
         for p in particles if p.type == "memory" else []:
             await self.field.spawn_particle(
-                id=uuid.uuid4(),
+                id=None,
                 type="memory",
+                key=token,
                 metadata={
                     "definitions": definition,
                     "context": context,
@@ -298,7 +293,7 @@ class LingualParticle(Particle):
     async def spawn_from_lexicon(self, engine, key, token, definition=None, persistent=False, source=None):
         now = datetime.now().timestamp()
         await self.field.spawn_particle(
-            id=uuid.uuid4(),
+            id=None,
             type="lingual",
             metadata={
                 "key": key,

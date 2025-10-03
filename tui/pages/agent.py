@@ -138,17 +138,16 @@ class AgentScreen(Vertical):
 
         try:
             chat_widget = self.query_one("#agent-chat-log", RichLog)
-            if chat_widget:
-                chat_log = self.agent.get_chat_history()
-                tony_msgs = chat_log.get("Tony", [])
-                misty_msgs = chat_log.get("Misty", [])
+            if chat_widget and self.agent:
+                meta_voice = api.get_api("_agent_meta_voice")
+                if meta_voice and hasattr(meta_voice, "chat_history"):
+                    recent_msgs = meta_voice.chat_history[-10:]  # Get last 10 messages
+                    for msg in recent_msgs:
+                        if "Tony" or "tony" in msg:
+                            chat_widget.write(f"[bold pink]Tony:[/bold pink] {msg}")
+                        elif "Misty" or "misty" in msg:
+                            chat_widget.write(f"[bold blue]Misty:[/bold blue] {msg}")
 
-                chat_widget.write("[bold underline]Chat History:[/bold underline]")
-                for t_msg, m_msg in zip(tony_msgs, misty_msgs):
-                    chat_widget.write(f"[bold pink]Tony:[/bold pink] {t_msg}")
-                    chat_widget.write(f"[bold blue]Misty:[/bold blue] {m_msg}")
-
-                await chat_widget.scroll_end(animate=False)
         except Exception as e:
             self.logger.log(f"Error updating chat widget: {e}", "ERROR", "tui_agent", "AgentScreen")
 
@@ -162,23 +161,28 @@ class AgentScreen(Vertical):
             message = input_widget.value
             message_length = len(message.strip())
 
-            if message_length == 0:
+            if message_length == 0 or not message:
                 return # skipping empty messages
-
-
-            self.query_one("#agent-chat-log", RichLog).write(f"[bold pink]You:[/bold pink] {message}")
+            
+                
+            # Display user message immediately
+            chat_log = self.query_one("#agent-chat-log", RichLog)
+            chat_log.write(f"[bold pink]You:[/bold pink] {message}")
             input_widget.value = ""
+            
 
             try:
                 if message_length == 0:
                     return  # Ignore empty messages
                 else:
-
-                    response = await self.agent_event.emit_event("user_input", message, "interface_chat")
-                    if response:
-                        self.query_one("#agent-chat-log", RichLog).write(f"[bold blue]Misty:[/bold blue] {response}")
-                    else:
-                        self.query_one("#agent-chat-log", RichLog).write(f"[bold red]System:[/bold red] [Error: No response]")
+                    try:
+                        response = await self.agent_event.emit_event("user_input", message, "interface_chat")
+                        if response:
+                            self.query_one("#agent-chat-log", RichLog).write(f"[bold blue]Misty:[/bold blue] {response}")
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.log(f"Error emitting user input event: {e}", "ERROR", "tui_agent", "AgentScreen")
+                        self.query_one("#agent-chat-log", RichLog).write(f"[bold red]System:[/bold red] [Error: {e}]")
 
 
             except Exception as e:

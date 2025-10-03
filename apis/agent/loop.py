@@ -32,7 +32,9 @@ class CognitionLoop:
         self.name = self.agent_config.get("name")
 
         self.conscious_active = False
+        self.cycle_count = 0
         self.subconscious_cycle_count = 0
+
 
         self.log("CognitionLoop initialized", context="CognitionLoop.__init__")
 
@@ -69,15 +71,31 @@ class CognitionLoop:
 
             if not self.field:
                 return
-                
+            
+            # Spawn a sensory particle to monitor system metrics
+            try:
+                sensory_p = await self.field.spawn_particle(
+                    type="sensory",
+                    energy=0.5,
+                    activation=0.3,
+                )
+                if sensory_p:
+                    sensory_p.process_environmental_input(
+                        input_type = "metrics"
+                    )
+            except Exception as e:
+                self.log(f"Sensory particle spawn error: {e}", level="ERROR", context="perform_maintenance_cycle")
+                import traceback
+                self.log(f"Full traceback:\n{traceback.format_exc()}")
+
             # Get recent particles for reflection
-            particles = list(self.field.get_all_particles())  
+            particles = self.field.get_all_particles()
                 
             # Reflect on memory particles
             for particle in particles:
                 if particle.type == "memory":
                     await self.meta_voice.reflect(particle)
-                    await particle.reflect()
+                    #await particle.reflect()
 
                 if particle.type == "lingual":
                     await self.lexicon_store.learn_from_particle(particle)
@@ -106,6 +124,8 @@ class CognitionLoop:
             self.field.stop_particle_updates()
             self.conscious_active = False
 
+            api.handle_shutdown()
+
             self.log("Shutdown complete. Session ended.", context="shutdown_sequence")
             
             # Cancel remaining tasks
@@ -127,17 +147,16 @@ class CognitionLoop:
                 if not self.events:
                     await asyncio.sleep(1.0)
                     continue
-                
+
                 # Active memory retrieval and processing
                 await self.process_active_cognition()
                 
-                # Brief rest between conscious cycles
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1.0)
                 
             except Exception as e:
                 self.log(f"Conscious loop error: {e}", level="ERROR", context="conscious_loop")
                 await asyncio.sleep(1.0)
-
+                
 
     async def process_active_cognition(self):
         """Handle active cognitive processing during conscious state"""
@@ -148,7 +167,7 @@ class CognitionLoop:
             active_particles = [p for p in particles if p.id in self.field.alive_particles and p.activation > 0.6]
             
             # Process active particles (conscious attention)
-            for particle in active_particles[:5]:  # Focus on top 5
+            for particle in active_particles[:10]:  # Focus on top 10
                 if hasattr(particle, 'observe'):
                     # Conscious observation collapses quantum states
                     collapsed_state = particle.observe(context="conscious_attention")
@@ -158,7 +177,7 @@ class CognitionLoop:
                     if collapsed_state == 'certain':
                         self.log(f"Conscious attention collapsed particle {particle.id} to certain state", 
                                 level="DEBUG", context="process_active_cognition")
-                        
+
                         
         except Exception as e:
             self.log(f"Active cognition error: {e}", level="ERROR", context="process_active_cognition")
@@ -173,6 +192,10 @@ class CognitionLoop:
             try:
                 # Increment cycle counter
                 self.subconscious_cycle_count += 1
+
+                # update particle field
+                #result = await self.field.update_particles()
+                #self.log(f"Subconscious loop particle update result: {result}", "DEBUG", "subconscious_loop")
 
                 # Perform maintenance every 10 cycles (adjustable)
                 if self.subconscious_cycle_count % 10 == 0:
@@ -189,7 +212,7 @@ class CognitionLoop:
 
                 
                 # Sleep to prevent excessive CPU usage
-                await asyncio.sleep(2.0)  # Adjust timing as needed
+                await asyncio.sleep(0.1)  # Adjust timing as needed
                 
             except Exception as e:
                 self.log(f"Subconscious loop error: {e}", level="ERROR", context="subconscious_loop")
@@ -198,8 +221,10 @@ class CognitionLoop:
 
     async def process_reflection_queue(self):
         """Process reflection queue for particle learning"""
-        try:
+        if self.subconscious_cycle_count < 5:
+            return # skip early cycles to allow time for system stabilization
 
+        try:
 
             # Get particles that need reflection processing
             particles = self.field.get_particles_by_type("lingual")
@@ -218,9 +243,18 @@ class CognitionLoop:
         try:
             chance = random.random()
             if chance < 0.1575: # ~15.75% chance every cycle
-                self.log("Processing generative reflection...", context="process_reflection_queue")
-                await self.meta_voice.reflect()
-                self.log("Generative reflection completed", context="process_reflection_queue")
+                try:
+                    self.log("Processing generative reflection...", context="process_reflection_queue")
+                    particle_list = self.field.get_all_particles()
+                    alive_particles = [p for p in particle_list if p.id in self.field.alive_particles]
+                    chosen_particle = random.choice(alive_particles)
+                    reflection_particle = chosen_particle
+                    await self.meta_voice.reflect(particle = reflection_particle)
+                    self.log("Generative reflection completed", context="process_reflection_queue")
+                except Exception as e:
+                    self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
+                    import traceback
+                    self.log(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="process_reflection_queue")
 
         except Exception as e:
             self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
@@ -230,14 +264,44 @@ class CognitionLoop:
     async def monitor_quantum_states(self):
         """Monitor particle superposition states and trigger collapses"""
         try:
-            particles = self.field.get_all_particles()
+            particles = self.field.particles
             self.log(f"Field returned type: {type(particles)}, value: {particles}", "DEBUG", context="monitor_quantum_states")
             
             for particle in particles:
-                if not isinstance(particle, (list, tuple)) or isinstance(particle, str):
-                    self.log(f"Invalid particle detected during quantum monitoring: {particle.id}", level="ERROR", context="monitor_quantum_states")
+                if not hasattr(particle, "id"):
+                    self.log(f"Invalid particle detected during quantum monitoring, no ID detected for particle: {type(particle)}", level="ERROR", context="monitor_quantum_states")
                     continue  # Stop processing if particles are not valid
                 
+                                
+                # Check if particle has the necessary quantum properties
+                if hasattr(particle, 'superposition') and hasattr(particle, 'observe'):
+                    try:
+                        # Safer observation pattern with type checking
+                        if isinstance(particle.superposition, dict) and "certain" in particle.superposition:
+                            # Dictionary with string keys
+                            collapsed_state = particle.observe(context="background_monitoring")
+                            particle.last_observed = asyncio.get_event_loop().time()
+                            self.log(f"Quantum collapse triggered for particle {particle.id}: {collapsed_state}", 
+                                    context="monitor_quantum_states")
+                        elif isinstance(particle.superposition, dict) and 0 in particle.superposition:
+                            # Dictionary with integer keys - adapt the observe method
+                            self.log(f"Integer-keyed superposition detected for {particle.id}", 
+                                "DEBUG", context="monitor_quantum_states")
+                            # Handle integer-keyed superposition differently if needed
+                        elif isinstance(particle.superposition, str):
+                            # Handle string superposition
+                            self.log(f"String superposition detected for {particle.id}: {particle.superposition}", 
+                                "DEBUG", context="monitor_quantum_states")
+                            # May need to convert or initialize properly
+                        else:
+                            # Unknown superposition format
+                            self.log(f"Unknown superposition format for {particle.id}: {type(particle.superposition)}", 
+                                    "WARNING", context="monitor_quantum_states")
+                            
+                    except Exception as e:
+                        self.log(f"Observation error for particle {particle.id}: {e}", level="ERROR", context="monitor_quantum_states")
+                        # Could initialize a proper superposition here if needed
+                        
 
             particle_count = len(particles)
             self.log(f"Monitoring {particle_count} particles for quantum state evaluation", level="DEBUG", context="monitor_quantum_states")
@@ -262,13 +326,16 @@ class CognitionLoop:
                                 context="monitor_quantum_states")
                         
         except Exception as e:
+            import traceback
             self.log(f"Quantum monitoring error: {e}", level="ERROR", context="monitor_quantum_states")
+            self.log(traceback.format_exc(), level="ERROR", context="monitor_quantum_states")
 
 
     async def field_monitor_loop(self):
         """Quantum field state monitoring and optimization"""
         while self.conscious_active:
-            try:                
+            try:
+
                 # Field-level quantum state monitoring
                 await self.monitor_quantum_states()
 
@@ -292,9 +359,9 @@ class CognitionLoop:
                     stats = self.field.get_particle_population_stats() if hasattr(self.field, 'get_particle_population_stats') else {}
                     self.log(f"Field state: {particle_count} particles, avg_energy: {avg_energy:.3f}, stats: {stats}", 
                             context="field_monitor_loop")
-                
-                await asyncio.sleep(2.0)  # Monitor every 2 seconds
-                
+
+                await asyncio.sleep(3.0)  # Monitor every 3 seconds
+
             except Exception as e:
                 self.log(f"Field monitoring error: {e}", level="ERROR", context="field_monitor_loop")
                 await asyncio.sleep(10.0)
