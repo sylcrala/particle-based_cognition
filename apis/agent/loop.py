@@ -225,18 +225,20 @@ class CognitionLoop:
             return # skip early cycles to allow time for system stabilization
 
         try:
-
-            # Get particles that need reflection processing
-            particles = self.field.get_particles_by_type("lingual")
-            reflection_candidates = [p for p in particles if p.metadata.get("needs_reflection", False)]
-            
-            for particle in reflection_candidates[:3]:  # Process a few at a time
-                if hasattr(particle, 'learn_from_particle'):
-                    await particle.learn_from_particle(particle)
-                    await self.meta_voice.reflect(particle)
-                    particle.metadata["needs_reflection"] = False
-                    self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")
-                    
+            chance = random.random()
+            if chance < 0.315: # ~31.5% chance every cycle
+                self.log("Processing reflection queue...", context="process_reflection_queue")
+                # Get particles that need reflection processing
+                particles = self.field.get_particles_by_type("lingual")
+                reflection_candidates = [p for p in particles if p.metadata.get("needs_reflection", False)]
+                
+                for particle in reflection_candidates[:3]:  # Process a few at a time
+                    if hasattr(particle, 'learn_from_particle'):
+                        await particle.learn_from_particle(particle)
+                        await self.meta_voice.reflect(particle)
+                        particle.metadata["needs_reflection"] = False
+                        self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")
+                        
         except Exception as e:
             self.log(f"Particle reflection processing error: {e}", level="ERROR", context="process_reflection_queue")
 
@@ -259,6 +261,14 @@ class CognitionLoop:
         except Exception as e:
             self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
 
+        try:
+            chance = random.random()
+            if chance < 0.05: # ~5% chance every cycle
+                self.log("Processing random memory consolidation...", context="process_reflection_queue")
+                await self.consolidate_memories()
+                self.log("Random memory consolidation completed", context="process_reflection_queue")
+        except Exception as e:
+            self.log(f"Random memory consolidation error: {e}", level="ERROR", context="process_reflection_queue")
 
 
     async def monitor_quantum_states(self):

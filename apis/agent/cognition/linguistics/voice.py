@@ -6,6 +6,7 @@ import random
 from time import time
 import numpy as np
 import json
+import traceback
 from apis.api_registry import api
 from datetime import datetime as dt
 from apis.agent.utils.embedding import ParticleLikeEmbedding
@@ -231,10 +232,6 @@ class MetaVoice:
     async def spawn_and_learn_token(self, tokens, source=None):
         """Create and learn from token via particle field - FIXED"""
         try:
-            # Convert tuple to string if needed
-            if isinstance(tokens, tuple):
-                tokens = ' '.join(str(token) for token in tokens if token)
-            
             # Ensure overall msg (tokens) is a string
             if not isinstance(tokens, str):
                 tokens = str(tokens)
@@ -273,7 +270,7 @@ class MetaVoice:
                                 await lp.learn(token=token)
                             except Exception as learn_error:
                                 self.log(f"Token learning error for '{token}': {learn_error}")
-                        
+                                self.log(f"Full traceback:\n{traceback.format_exc()}")
                         if lp:
                             created_particles.append(lp)
                 
@@ -302,14 +299,13 @@ class MetaVoice:
                             await lp.learn(token=tokens)
                         except Exception as learn_error:
                             self.log(f"Token learning error for '{tokens}': {learn_error}")
-
+                            self.log(f"Full traceback:\n{traceback.format_exc()}")
                     return lp
                         
             return None
                         
         except Exception as e:
             self.log(f"Token learning error: {e}")
-            import traceback
             self.log(f"Full traceback:\n{traceback.format_exc()}")
             return None
 
@@ -396,7 +392,9 @@ class MetaVoice:
                     )
             except Exception as e:
                 self.log(f"Memory update error: {e}")
+                self.log(f"Full traceback:\n{traceback.format_exc()}")
         except Exception as e:
             self.log(f"Reflection error: {e}")
+            self.log(f"Full traceback:\n{traceback.format_exc()}")
 
  

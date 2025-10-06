@@ -620,11 +620,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.particle_count = QtWidgets.QLabel("Total Particles: 0")
         self.system_energy = QtWidgets.QLabel("System Energy: 0.00")
         self.average_certainty = QtWidgets.QLabel("Average Certainty: 0.00")
-        
+        self.average_energy = QtWidgets.QLabel("Average Particle Energy: 0.00")
+        self.average_activation = QtWidgets.QLabel("Average Activation Level: 0.00")
+
         metrics_layout.addWidget(self.particle_count)
         metrics_layout.addWidget(self.system_energy)
         metrics_layout.addWidget(self.average_certainty)
-        
+        metrics_layout.addWidget(self.average_energy)
+        metrics_layout.addWidget(self.average_activation)
+
         # Update metrics timer
         self.metrics_timer = QtCore.QTimer()
         self.metrics_timer.timeout.connect(self.update_metrics)
@@ -715,17 +719,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if not message:
             return
         
-        self.chat_input.clear()
+        agent = api.get_api("agent")
 
+        self.chat_input.clear()
         self.update_chat_display(f"<b>You:</b> {message}")
         
         # Send event to agent event handler
         try:
-            response = api.handle_agent_message(
+            response = agent.handle_agent_message(
                 message=message,
                 source="gui_user",
                 tags=["ui", "chat", "other", "message"],
-                timeout=30.0
+                timeout=240.0
             )
             self.update_chat_display(f"<b>Misty:</b> {response}")
         except Exception as e:
@@ -784,6 +789,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.particle_count.setText("Total Particles: N/A")
                 self.system_energy.setText("System Energy: N/A")
                 self.average_certainty.setText("Average Certainty: N/A")
+                self.average_energy.setText("Average Particle Energy: N/A")
+                self.average_activation.setText("Average Activation Level: N/A")
                 return
 
             particles = field.get_all_particles()
@@ -791,6 +798,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.particle_count.setText("Total Particles: 0")
                 self.system_energy.setText("System Energy: 0.00")
                 self.average_certainty.setText("Average Certainty: 0.00")
+                self.average_energy.setText("Average Particle Energy: 0.00")
+                self.average_activation.setText("Average Activation Level: 0.00")
                 return
             
             # Update metrics safely
@@ -816,10 +825,25 @@ class MainWindow(QtWidgets.QMainWindow):
             avg_certainty = certainty_sum / valid_particles if valid_particles > 0 else 0
             self.average_certainty.setText(f"Average Certainty: {avg_certainty:.2f}")
             
+            # Average particle energy
+            avg_energy = total_energy / len(particles) if len(particles) > 0 else 0
+            self.average_energy.setText(f"Average Particle Energy: {avg_energy:.2f}")
+
+            # Average activation level
+            activation_sum = 0
+            for p in particles:
+                if hasattr(p, 'activation'):
+                    activation_sum += p.activation
+            avg_activation = activation_sum / len(particles) if len(particles) > 0 else 0
+            self.average_activation.setText(f"Average Activation Level: {avg_activation:.2f}")
+            
+
         except Exception as e:
             self.particle_count.setText("Total Particles: Error")
             self.system_energy.setText(f"System Energy: Error ({str(e)[:20]}...)")
             self.average_certainty.setText("Average Certainty: Error")
+            self.average_energy.setText("Average Energy: Error")
+            self.average_activation.setText("Average Activation: Error")
             log_to_console(f"Error updating metrics: {str(e)}", "ERROR")
     
     def trigger_reflection(self):
@@ -831,7 +855,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
                 
             try:
-                agent.cognition_loop.reflect()
+                agent.cognition_loop.reflect() ## TODO fix
 
             except Exception as e:
                 self.add_to_log(f"Error triggering reflection: {str(e)}", "ERROR")

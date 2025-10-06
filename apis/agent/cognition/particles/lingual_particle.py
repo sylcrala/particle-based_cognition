@@ -22,7 +22,7 @@ class LingualParticle(Particle):
         super().__init__(type="lingual", **kwargs)
         self.token = token or self.metadata.get("token")                                         # stored message
         self.embedding = self._message_to_vector(self.token)   # embedded vector for message
-
+        self.ext_res = api.get_api("external_resources")
         
         self.lexicon_id = None
 
@@ -163,7 +163,7 @@ class LingualParticle(Particle):
             return
 
         # Classify and define
-        classified = api.call_api("external_resources", "classify_term", (token, context))
+        classified = self.ext_res.classify_term(token)
         definition, sources = await self.define_term(token, phrase=context)
 
         stored = await self._store_in_memory(token, definition, classified, sources)
@@ -207,7 +207,7 @@ class LingualParticle(Particle):
 
         for token in tokens: 
             if token not in self.lexicon_store.lexicon or await self.lexicon_store.get_term_def(token) == Exception:
-                classified = api.call_api("external_resources", "classify_term", (token, context))
+                classified = self.ext_res.classify_term(token)
                 definition, sources = await self.define_term(token, tokens)
 
                 if not await self._store_in_memory(token, definition, classified, sources):
@@ -239,8 +239,8 @@ class LingualParticle(Particle):
         self.log(f"[Learn] learned about {particle.id} | {particle.type}.", source="LingualParticle", context="learn_from_particle()")
 
 
-    async def define_term(self, term, phrase):
-        defs = api.call_api("external_resources", "get_external_definitions", (term, phrase))
+    async def define_term(self, term, phrase=None):
+        defs = await self.ext_res.get_external_definitions(term)
         final_def, sources_used = self.compare_and_merge_definitions(defs)
 
         #await self.reflect_on_def(term, sources_used)
@@ -254,8 +254,8 @@ class LingualParticle(Particle):
 
 
     def compare_and_merge_definitions(self, def_dict):
-        ranked_defs = sorted(def_dict, key=lambda item: len(item[1] or ""), reverse=True)
-        sources_used = {k: v for k, v in ranked_defs if v}
+        #ranked_defs = sorted(def_dict, key=lambda item: len(item[1] or ""), reverse=True)
+        sources_used = {k: v for k, v in def_dict.items() if v}
         if not sources_used:
             return None, {}
         best_source, best_def = next(iter(sources_used.items()))

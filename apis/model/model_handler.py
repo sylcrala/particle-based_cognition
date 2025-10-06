@@ -120,7 +120,7 @@ class ModelHandler:
         if not prompt:
             return "[Error: No prompt provided]"
         
-        prompt = f"Received message from {config.user_name}: <s>{prompt}</s>" if source == "user_input" else prompt
+        #prompt = f"Received message from {config.user_name}: <s>{prompt}</s>" if source == "user_input" else prompt      *handled in event_handler*
 
         #debug
         print(f"[ModelHandler] Generating response for prompt: {prompt}")

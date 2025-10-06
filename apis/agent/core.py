@@ -2,7 +2,7 @@
 Centralized core module for agent initialization and management.
 """
 import asyncio
-
+import datetime
 from apis.api_registry import api
 
   
@@ -168,21 +168,46 @@ class AgentCore:
                 try:
                     self.log("Starting cognitive task group...", level="DEBUG", context="run")
                     
-                    # Use gather to run all tasks concurrently and restart if any complete
-                    result = [
-                        asyncio.gather(self.particle_field.update_particles(), return_exceptions=True),
-                        asyncio.gather(self.cognition_loop.conscious_loop(), return_exceptions=True),
-                        asyncio.gather(self.cognition_loop.field_monitor_loop(), return_exceptions=True),
-                        asyncio.gather(self.cognition_loop.subconscious_loop(), return_exceptions=True)
-                        #asyncio.gather(self.particle_field.continuous_particle_updates(), return_exceptions=True)
+                    # Create tasks that run continuously
+                    tasks = [
+                        asyncio.create_task(self.particle_field.continuous_particle_updates(), name="particle_field"),
+                        asyncio.create_task(self.cognition_loop.conscious_loop(), name="conscious_loop"),
+                        asyncio.create_task(self.cognition_loop.field_monitor_loop(), name="field_monitor"),
+                        asyncio.create_task(self.cognition_loop.subconscious_loop(), name="subconscious_loop")
                     ]
-                                
-                    # Log which tasks completed/failed
-                    self.log(f"Task group completed with results: {result}", level="WARNING", context="run")
                     
-                    # If we reach here, one or more tasks completed unexpectedly
+                    # Wait for any task to complete (which shouldn't happen in normal operation)
+                    done, pending = await asyncio.wait(
+                        tasks, 
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # If we reach here, something completed unexpectedly
+                    completed_tasks = []
+                    for task in done:
+                        task_name = task.get_name()
+                        if task.exception():
+                            self.log(f"Task '{task_name}' failed with exception: {task.exception()}", 
+                                level="ERROR", context="run")
+                            completed_tasks.append(f"{task_name}(ERROR)")
+                        else:
+                            result = task.result()
+                            self.log(f"Task '{task_name}' completed unexpectedly with result: {result}", 
+                                level="WARNING", context="run")
+                            completed_tasks.append(f"{task_name}(COMPLETED)")
+                    
+                    # Cancel remaining tasks
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                    
+                    # Log what happened and restart if still running
                     if self._running:
-                        self.log("Task group completed unexpectedly, restarting...", level="WARNING", context="run")
+                        self.log(f"Cognitive tasks completed unexpectedly: {completed_tasks}. Restarting...", 
+                            level="WARNING", context="run")
                         await asyncio.sleep(1)  # Brief pause before restart
                     
                 except Exception as e:
@@ -222,3 +247,70 @@ class AgentCore:
         for task in asyncio.all_tasks():
             if not task.done():
                 task.cancel()
+
+    def handle_agent_message(self, message: str, source: str = None, 
+                           tags: list = None, timeout: float = 60.0) -> str:
+        """
+        MAIN API: Handle agent message with response        
+        """
+        """
+        # testing async call from sync context for emit_event, if it doesnt work try below method
+        try:
+            future = asyncio.gather(
+                self.event_handler.emit_event("user_input", message, source or "api_registry", 1),
+                return_exceptions=True
+            )
+            return future
+        except RuntimeError:
+            return asyncio.run(self.event_handler.emit_event("user_input", message, source or "api_registry", 1))
+
+        """
+        try:
+            # Ensure event handler has loop reference
+            if not hasattr(self.event_handler, '_agent_loop') or self.event_handler._agent_loop is None:
+                self.log("Event handler missing loop reference, attempting to set", "WARNING", "handle_agent_message")
+                # Try to get the loop from a known async context
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        self.event_handler._agent_loop = loop
+                except:
+                    pass
+
+            # Generate unique message ID
+            message_id = f"msg_{int(datetime.datetime.now().timestamp() * 1000)}"
+
+            # Prepare message data
+            message_data = {
+                'id': message_id,
+                'message': message,
+                'source': source,
+                'tags': tags or ['gui_message'],
+                'timestamp': datetime.datetime.now().timestamp()
+            }
+
+            message = message_data['message']
+            source = message_data.get('source', 'api_registry')
+
+            try:
+                self.log("Using handle_event_sync for event processing", "DEBUG", "_process_agent_message")
+                result = self.event_handler.handle_event_sync(message, "user_input", source)
+                if result:
+                    # Handle different response formats
+                    if hasattr(result, 'content'):
+                        return str(result.content)
+                    elif hasattr(result, 'token'):
+                        return str(result.token)
+                    elif isinstance(result, str):
+                        return result
+                    else:
+                        return str(result)
+                else:
+                    return "I processed your message but didn't generate a response."
+                
+            except Exception as injection_error:
+                return f"Event handling error: {injection_error}"
+                
+        except Exception as e:
+            return f"Message processing error: {e}"
+            

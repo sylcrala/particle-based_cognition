@@ -6,6 +6,7 @@ all particle spawning and pruning operations should be routed through here and p
 import os
 import math
 import random
+import uuid
 import numpy as np
 import datetime as dt
 from time import time
@@ -164,13 +165,34 @@ class ParticleField:
                     
                     self.log(f"Successfully linked particle {particle.id} to source {source_particle_id}", 
                             level="DEBUG", context="spawn_particle")
+                
+                if source_particle and source_particle.alive == False and source_particle.id not in self.alive_particles:
+                    # Link to a dead particle - spawn as a new particle with ghost traces (keep old particle links for full historical interconnectedness (this way, old dead particles are able to be *respawned* and referenced))
+                    particle.linked_particles = {"ghost": source_particle.id} # mark as ghost linkage
+
+                    # Also update the source particle to know about this ghost child
+                    if not hasattr(source_particle, 'linked_particles'):
+                        source_particle.linked_particles = {}
+                    if 'ghost_children' not in source_particle.linked_particles:
+                        source_particle.linked_particles['ghost_children'] = []
+                    
+                    # Prevent duplicate ghost child entries
+                    if particle.id not in source_particle.linked_particles['ghost_children']:
+                        source_particle.linked_particles['ghost_children'].append(particle.id)
+
+                    particle.linked_to = None  # No direct live linkage
+
+                    self.log(f"Warning: Linked to dead particle {source_particle_id}, spawning as ghost trace",
+                            level="WARNING", context="spawn_particle")
+
                 else:
                     # Invalid source - spawn as orphan with warning
-                    self.log(f"Warning: Cannot link to non-existent or dead particle {source_particle_id}, spawning as orphan", 
+                    self.log(f"Warning: Cannot link to non-existent particle {source_particle_id}, spawning as orphan", 
                             level="WARNING", context="spawn_particle")
                     particle.linked_particles = {}
                     particle.linked_to = None
                     source_particle_id = None  # Clear for logging
+
             else:
                 particle.linked_particles = {}
                 particle.linked_to = None
@@ -328,7 +350,8 @@ class ParticleField:
                     # Calculate collapse probability based on context and distance
                     distance = trigger_particle.distance_to(particle)
                     base_probability = max(0.1, 1.0 - (distance / cascade_radius))
-                    
+                    particle.activation += 0.01  # Slight activation boost
+
                     # Context-specific modifiers
                     context_modifier = {
                         'user_interaction': 0.8,
@@ -341,6 +364,7 @@ class ParticleField:
                     
                     if random.random() < collapse_probability:
                         collapsed_state = particle.observe(context=f"{context_type}_cascade")
+                        particle.energy -= 0.025 # energy cost for collapse
                         collapse_log.append((particle.id, collapsed_state))
                         
                         # Create linkage between trigger and collapsed particle
@@ -610,26 +634,33 @@ class ParticleField:
                     particle_context
                 )
 
+            # Initialize force accumulator for this particle
             adaptive_force = np.zeros(12)
+
             for j, other in enumerate(alive_particles):
 
                 if i == j or not other.alive:  # Skip self
                     continue
                 
-                # Calculate energy cost for this interaction
-                distance = distance_matrix[i][j] if j < len(distance_matrix[i]) else 1.0
+                # Calculate adaptive distance using the engine's full distance method
                 if self.adaptive_engine and hasattr(self.adaptive_engine, 'distance'):
-                    distance = self.adaptive_engine.distance(particle.id, particle.position, other.id, other.position)
+                    adaptive_distance = self.adaptive_engine.distance(
+                        particle.id, particle.position, 
+                        other.id, other.position
+                    )
+                else:
+                    # Fallback to matrix distance if adaptive engine unavailable
+                    adaptive_distance = distance_matrix[i][j] if j < len(distance_matrix[i]) else 1.0
                     
-                energy_cost = self.calculate_interaction_energy_cost(particle, other, distance)
+                energy_cost = self.calculate_interaction_energy_cost(particle, other, adaptive_distance)
                 
                 # Only proceed if particle has enough energy and activation
                 if particle.energy >= energy_cost and particle.activation > 0.1:
                     # Deduct energy cost for this interaction
                     particle.energy -= energy_cost
                     
-                    # Calculate force with energy-scaled intensity
-                    force_scale = 0.0015 * (particle.activation / max(distance, 0.01))
+                    # Calculate force with energy-scaled intensity using adaptive distance
+                    force_scale = 0.0015 * (particle.activation / max(adaptive_distance, 0.01))
                     if self.adaptive_engine and hasattr(self.adaptive_engine, 'long_range_force'):
                         f = self.adaptive_engine.long_range_force(
                             particle.id, particle.position,
@@ -640,7 +671,7 @@ class ParticleField:
 
                     # Process consolidation scoring with energy regulation
                     if hasattr(particle, "calculate_consolidation_score"):
-                        score = particle.calculate_consolidation_score(other, distance)
+                        score = particle.calculate_consolidation_score(other, adaptive_distance)
                         if self.adaptive_engine and hasattr(self.adaptive_engine, 'update_interaction'):
                             self.adaptive_engine.update_interaction(particle.id, other.id, score)
                         
@@ -652,17 +683,21 @@ class ParticleField:
             particle.velocity = np.array(particle.velocity) + adaptive_force
             
             # Energy regeneration: particles slowly recover energy over time
-            base_regen = 0.00475  # Base regeneration rate
-            activation_bonus = particle.activation * 0.001  # Higher activation = faster regen
+            base_regen = 0.00375  # Base regeneration rate
+            activation_bonus = particle.activation * 0.0005  # Higher activation = faster regen
             particle.energy = min(1.0, particle.energy + base_regen + activation_bonus)
             
             # Activation decreases when energy is low (dependency link)
             if particle.energy < 0.3:
-                particle.activation *= 0.99  # Gradual activation decay at low energy
-            elif particle.energy > 0.7:
+                particle.activation *= 0.975  # Faster decay at low energy
+            elif particle.energy < 0.7:
+                particle.activation *= 0.995  # Slower decay at moderate energy
+            elif particle.energy < 0.9:
+                particle.activation = min(1.0, particle.activation * 1.0005)  # Very slight boost 
+            elif particle.energy > 0.9:
                 particle.activation = min(1.0, particle.activation * 1.001)  # Slight boost at high energy
 
-            reproduction_chance = random.random() < particle.energy * particle.activation * 0.00075
+            reproduction_chance = random.random() < particle.energy * particle.activation * 0.00075 # Low chance based on energy and activation
             if reproduction_chance and len(self.particles) < MAX_PARTICLE_COUNT:
                 # Spawn a child particle with slight variations
                 child_id = f"{particle.id}-child-{int(time())}-{random.randint(0,1000)}"
@@ -675,7 +710,7 @@ class ParticleField:
                     metadata=child_metadata,
                     energy=0.5 * particle.energy,
                     activation=0.5 * particle.activation,
-                    AE_policy=particle.AE_policy,
+                    AE_policy=particle.policy,
                     source_particle_id=particle.id
                 )
                 
@@ -909,7 +944,7 @@ class ParticleField:
                         metadata=particle_data.get('metadata', {}),
                         energy=particle_data.get('energy', 0.5),
                         activation=particle_data.get('activation', 0.5),
-                        AE_policy=particle_data.get('AE_policy'),
+                        AE_policy=particle_data.get('policy'),
                         position=np.array(particle_data.get('position')) if particle_data.get('position') else None,
                         emit_event=False  # Don't emit events during restoration
                     )

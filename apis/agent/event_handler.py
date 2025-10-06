@@ -3,6 +3,7 @@ Agent Event Handler - integrates with API registry and shared services
 """
 
 import asyncio
+import concurrent.futures
 import heapq
 from time import time
 from apis.api_registry import api
@@ -21,6 +22,7 @@ class EventHandler:
         self.running = False
         self.event_loop_task = None
         self.start_time = 0 
+        self._agent_loop = None  
 
         self.field = field
         self.memory = memory
@@ -62,8 +64,12 @@ class EventHandler:
             if priority is None:
                 priority = self.get_default_priority(event_type, source)
             
-            await self.event_queue.put(event, priority=priority)
-            self.log(f"Event emitted: {event_type} from {source}", "DEBUG", context="emit_event")
+            if event_type == "user_input":
+                result = await self.handle_event(event)
+                return result
+            else:
+                await self.event_queue.put(event, priority=priority)
+                self.log(f"Event emitted: {event_type} from {source}", "DEBUG", context="emit_event")
             #return result
         except Exception as e:
             self.log(f"Error emitting event {event_type} from {source}: {e}", "ERROR", context="emit_event")
@@ -129,19 +135,37 @@ class EventHandler:
             self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_event")
             return None
     
-    def handle_event_sync(self, event):
-        """Syncronous event handler for thread-safe GUI"""
+    def handle_event_sync(self, data, event_type, source="unknown"): ##
+        """Syncronous event handler for thread-safe GUI""" 
         try:
-            try:
-                loop = asyncio.get_running_loop()
+            event = {
+                "type": event_type,
+                "data": data,
+                "source": source,
+                "timestamp": time()
+            }
 
+            if not hasattr(self, '_agent_loop'):
+                self.log("No event loop available for sync event handling", "ERROR", "handle_event_sync")
+                return "Error: No event loop available"
+
+            try:
                 future = asyncio.run_coroutine_threadsafe(
                     self.handle_event(event),
-                    loop
+                    self._agent_loop
                 )
-                return future.result(timeout=30.0)
-            except RuntimeError:
-                return asyncio.run(self.handle_event(event))
+                result = future.result(timeout=120.0)
+                return result
+            
+            except concurrent.futures.TimeoutError:
+                self.log("Timeout in sync event handling", "ERROR", "handle_event_sync")
+                return "Error: Timeout"
+            except Exception as e:
+                self.log(f"Error in sync event handling: {e}", "ERROR", "handle_event_sync")
+                import traceback
+                self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", "handle_event_sync")
+                return f"Error: {e}"
+
         except Exception as e:
             self.log(f"Sync event handling error: {e}", "ERROR", "handle_event_sync")
             return f"Error: {e}"
@@ -215,7 +239,7 @@ class EventHandler:
         memory = self.memory
         if memory and hasattr(memory, 'perform_maintenance'):
             await memory.perform_maintenance()
-
+        # TODO 
         return True
     
     async def handle_shutdown(self, event):
@@ -293,6 +317,8 @@ class EventHandler:
         
         # Start idle scheduler  
         self.idle_task = asyncio.create_task(self.start_idle_scheduler())
+
+        self._agent_loop = asyncio.get_event_loop()
 
         await asyncio.sleep(2.0)  # Give tasks a moment to start
         self.start_time = time()

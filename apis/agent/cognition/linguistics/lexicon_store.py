@@ -395,6 +395,8 @@ class LexiconStore:
             
         except Exception as e:
             self.logger.log(f"Error learning from particle: {e}", "ERROR", "learn_from_particle")
+            import traceback
+            self.logger.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", "learn_from_particle")
             return False
 
     # Additional enhanced methods for Qdrant system
