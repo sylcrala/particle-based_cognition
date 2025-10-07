@@ -142,7 +142,7 @@ class LingualParticle(Particle):
         Stores information in the lexicon and logs memory events.
         """
         token = str(token) or str(self.token)
-        context = context or [self.expression] if self.expression else []
+        context = context or [self.expression] if self.expression else self.metadata.get("context", [])
         now = datetime.now().timestamp()
 
         if not token or not isinstance(token, str) or token.strip() == "":
@@ -187,12 +187,26 @@ class LingualParticle(Particle):
         source_str = ", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
         await self.memory_bank.link_token(token, definition, source_str)
 
-        await self.memory_bank.update(f"learn-{token}-{int(now)}", f"[Lexical Learn] Learned: '{token}' with classification {classified}")
+        await self.memory_bank.update(
+            key = f"learn-{token}-{int(now)}", 
+            value = f"[Lexical Learn] Learned: '{token}' with classification {classified}",
+            source = "lp_learn",
+            source_particle_id=str(self.id),
+            memory_type="memories",
+        )
 
         self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
 
 
     async def learn_from_particle(self, particle):
+
+        if not particle or not hasattr(particle, 'type'):
+            self.log(f"Invalid particle: {particle}", "WARNING", "learn_from_particle")
+            return False
+        if particle.alive is False:
+            self.log(f"Particle {particle.id} is not alive, skipping learning.", "WARNING", "learn_from_particle")
+            return False
+
         text = self.expression
         tone = particle.traits.get("tone")
         origin = particle.traits.get("origin")
@@ -233,7 +247,9 @@ class LingualParticle(Particle):
         await self.memory_bank.update(
             key=f"learn-{int(now)}",
             value=f"I learned {len(tokens)} new terms.",
-            persistent=True
+            memory_type="memories",
+            source_particle_id=str(self.id),
+            source = "learn_from_particle",
         )
 
         self.log(f"[Learn] learned about {particle.id} | {particle.type}.", source="LingualParticle", context="learn_from_particle()")
@@ -249,7 +265,13 @@ class LingualParticle(Particle):
 
     async def reflect_on_def(self, term, sources):
         summary = f"I encountered the term '{term}'. SpaCy defines it as: {sources.get('spacy')}"
-        await self.memory_bank.update(f"reflect-def-{term}", summary)
+        await self.memory_bank.update(
+            key = f"reflect-def-{term}", 
+            value = summary,
+            source = "definition_reflection",
+            source_particle_id=str(self.id),
+            memory_type="lexicon",
+        )
         self.log(f"[Reflect] {summary}", source = "LingualParticle", context = "reflect_on_def()")
 
 
@@ -263,9 +285,8 @@ class LingualParticle(Particle):
 
 
     async def _store_in_memory(self, token, definition, classification, sources):
-        particles = self.field.particles
         context = classification.get("context", "learn")
-        for p in particles if p.type == "memory" else []:
+        try:
             await self.field.spawn_particle(
                 id=None,
                 type="memory",
@@ -278,9 +299,13 @@ class LingualParticle(Particle):
                     "tags": classification["tags"],
                     "intent": classification["intent"],
                     "updated": time.time()
-                })
+                },
+                source_particle_id = str(self.id),
+            )
             return True
-        return False
+        except Exception as e:
+            self.log(f"Error storing in memory: {e}", source="LingualParticle", context="_store_in_memory()", level="ERROR")
+            return False
 
 
     def decay(self):
@@ -308,7 +333,8 @@ class LingualParticle(Particle):
             energy=0.12,
             activation=0.15,
             AE_policy="reflective",
-            particle_source = source or EXTERNAL_SOURCE
+            particle_source = source or EXTERNAL_SOURCE,
+            source_particle_id = str(self.id)
         )
     
 
@@ -326,7 +352,8 @@ class LingualParticle(Particle):
             },
             tokenizer=self.tokenizer,
             energy=0.1,
-            activation=0.1
+            activation=0.1,
+            source_particle_id = str(self.id)
         )
 
         particle.particle = particle

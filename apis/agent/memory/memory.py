@@ -717,9 +717,15 @@ class MemoryBank:
             embedding_text = f"particle field state {field_state_doc['timestamp']} {len(field_state.get('particles_summary', []))} particles"
             embedding = self.embeddings([embedding_text])[0]
             
-            # Create Qdrant point
+            # Create Qdrant point with timestamp-based ID for historical tracking
+            import hashlib
+            timestamp_str = field_state_doc['timestamp']
+            # Generate deterministic ID from timestamp for consistency
+            uuid_seed = hashlib.md5(timestamp_str.encode()).hexdigest()
+            timestamp_id = int(uuid_seed[:15], 16)  # Deterministic but unique per timestamp
+            
             point = PointStruct(
-                id=int(uuid.uuid4()),  # Fixed ID for easy retrieval
+                id=timestamp_id,  # Timestamp-based ID preserves multiple states
                 vector=embedding,
                 payload=field_state_doc
             )
@@ -731,7 +737,8 @@ class MemoryBank:
                 points=[point]
             )
             
-            self.log(f"Field state saved to Qdrant: {len(field_state.get('particles_summary', []))} particles", 
+            particle_count = len(field_state.get('particles_summary', []))
+            self.log(f"Field state saved to Qdrant: {particle_count} particles (ID: {timestamp_id})", 
                     "INFO", "save_field_state_to_db")
             
         except Exception as e:
@@ -743,7 +750,7 @@ class MemoryBank:
     def restore_field_state(self):
         """Restore particle field state from Qdrant"""
         try:
-            # Use Qdrant scroll to find the field state point
+            # Get ALL field states and find the most recent
             results, _ = self.client.scroll(
                 collection_name=self.system,
                 scroll_filter=Filter(
@@ -754,14 +761,23 @@ class MemoryBank:
                         )
                     ]
                 ),
-                limit=1,
+                # No limit - ensure we get ALL states to find true latest
                 with_payload=True
             )
             
             if results and len(results) > 0:
-                point = results[-1]
+                # Log available states for debugging
+                self.log(f"Found {len(results)} field states in Qdrant", "DEBUG", "restore_field_state")
+                
+                # Find most recent by timestamp
+                point = max(results, key=lambda x: x.payload.get('timestamp', ''))
                 field_data = point.payload.get('data')
                 timestamp = point.payload.get('timestamp')
+                particle_count = len(field_data.get('particles_summary', [])) if field_data else 0
+                
+                # Log restoration details
+                self.log(f"Restoring field state: {timestamp} ({particle_count} particles)", 
+                        "INFO", "restore_field_state")
                 
                 self.log(f"Field state restored from Qdrant: {timestamp}", 
                         "INFO", "restore_field_state")

@@ -104,7 +104,15 @@ class MetaVoice:
             else:
                 self.thoughts.append({"thought": response, "timestamp": dt.now().timestamp()})
 
-            await self.memory_bank.update(key=mem_key, value=mem_entry, links=[str(input_particle.id), str(response_particle.id)], source_particle_id=str(input_particle.id), source="voice generation", tags=gentags, memory_type="conversation")
+            await self.memory_bank.update(
+                key=mem_key, 
+                value=mem_entry, 
+                links=[str(input_particle.id), str(response_particle.id)], 
+                source_particle_id=str(input_particle.id), 
+                source="response generation", 
+                tags=gentags, 
+                memory_type="memories"
+            )
 
             return response
         except Exception as e:
@@ -220,13 +228,35 @@ class MetaVoice:
         try:
 
             # Create lingual particle for input processing
-            particle = await self.spawn_and_learn_token(text, source="user_input")
+            particle = await self.spawn_input_particle(text, source="user_input")
 
             self.chat_history.append({"Tony": text, "timestamp": dt.now().timestamp()})
 
             return particle
         except Exception as e:
             self.log(f"Input processing error: {e}")
+            return None
+        
+    async def spawn_input_particle(self, text, source=None):
+        """Spawn a lingual particle for input text"""
+        try:
+            if self.field:
+                particle = await self.field.spawn_particle(
+                    type="lingual",
+                    metadata={
+                        "content": text,
+                        "source": source or "unknown",
+                        "processing_type": "input" if source == "user_input" else "unknown_input",
+                        "timestamp": time()
+                    },
+                    energy=0.5,
+                    activation=0.7,
+                    emit_event=True
+                )
+                return particle
+            return None
+        except Exception as e:
+            self.log(f"Error spawning input particle: {e}")
             return None
 
     async def spawn_and_learn_token(self, tokens, source=None):
@@ -255,9 +285,9 @@ class MetaVoice:
                             metadata={
                                 "token": token,
                                 "content": token,
+                                "context": tokens,
                                 "source": source or "unknown",
-                                "processing_type": "input" if source == "user_input" else "learning_token",
-                                "timestamp": time()
+                                "processing_type": "learning_token",
                             },
                             energy=0.3,
                             activation=0.4,

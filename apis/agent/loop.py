@@ -385,14 +385,14 @@ class CognitionLoop:
             # Get recent high-activation particles for memory consolidation  
             if self.field:
                 particles = self.field.get_all_particles()
-                high_activation = [p for p in particles if hasattr(p, 'activation') and p.activation > 0.8]
+                high_activation = [p for p in particles if hasattr(p, 'activation') and p.activation > 0.65]
                 
-                for particle in high_activation[:3]:  # Consolidate top 3
+                for particle in high_activation[:15]:  # Consolidate top 15
                     if hasattr(particle, 'metadata') and particle.metadata:
                         await self.memory.consolidate_particle_memory(particle)
-            
-            self.log("Memory consolidation completed", "DEBUG", "consolidate_memories")
-            
+
+            self.log(f"Memory consolidation completed for {len(high_activation)} particles", "DEBUG", "consolidate_memories")
+
         except Exception as e:
             self.log(f"Memory consolidation error: {e}", "ERROR", "consolidate_memories")
 

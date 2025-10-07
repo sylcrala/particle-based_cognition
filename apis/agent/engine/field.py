@@ -260,9 +260,7 @@ class ParticleField:
     async def prune_low_value_particles(self):
         self.log(f"Beginning pruning at {time()} with {len(self.particles)} particles present.")
 
-        if len(self.particles) <= 100:
-            return
-        
+
         alive_particles = [p for p in self.particles if p.alive]
         scored_particles = []
         for p in alive_particles:
@@ -295,7 +293,24 @@ class ParticleField:
 
         # Sort by lowest score
         scored_particles.sort(key=lambda x: x[0])
-        to_prune = [p for _, p in scored_particles[:10]]
+
+        prune_percentage = self._calculate_adaptive_pruning_rate()
+        total_particles = len(scored_particles)
+
+        target_prune_count = int(total_particles * prune_percentage)
+
+        MIN_SURVIVORS = 100
+        MAX_PRUNE_PER_CYCLE = int(total_particles * 0.4)
+
+        safe_prune_count = min(
+            target_prune_count,
+            total_particles - MIN_SURVIVORS,
+            MAX_PRUNE_PER_CYCLE
+        )
+        safe_prune_count = max(0, safe_prune_count)  # Ensure non-negative
+
+        to_prune = [p for _, p in scored_particles[:safe_prune_count]]
+        self.log(f"Pruning {len(to_prune)} particles out of {total_particles} (target was {target_prune_count})", level="INFO", context="prune_low_value_particles")
 
         for p in to_prune:
             p.alive = False
@@ -307,6 +322,61 @@ class ParticleField:
             self.adaptive_engine.policies.pop(p.id, None)   # removing pruned particles' AE policies
 
             self.log(f"Pruned low-score particle: {p.id}")
+
+    def _calculate_adaptive_pruning_rate(self) -> float:
+        """Dynamically adjust pruning rate based on particle count"""
+        try:
+            # get sys metrics from sensory particles or direct API
+            metrics = None
+
+            sensory_particles = self.get_particles_by_type("sensory")
+            if sensory_particles:
+                latest_sensory = max(sensory_particles, key=lambda p: p.environmental_state.get("timestamp", 0))
+                metrics = latest_sensory.environmental_state.get("current_state", {})
+
+            if not metrics:
+                system_metrics_api = api.get_api("system_metrics")
+                if system_metrics_api:
+                    metrics = system_metrics_api.get_current_metrics()
+
+            if not metrics:
+                self.log("No system metrics available for adaptive pruning rate calculation", "WARNING", "_calculate_adaptive_pruning_rate")
+                return 0.05  # default pruning rate
+
+            cpu_usage = metrics.get("cpu_usage", 0) / 100.0 # convert to 0-1 scale
+            mem_percent = metrics.get("memory_usage", 0) / 100.0 # convert to 0-1 scale
+            particle_count = len(self.particles)
+
+            if cpu_usage > 0.6 and particle_count >= 1000:
+                prune_rate = 0.30 # aggressive pruning, 30%
+                reason = f"HIGH_LOAD (CPU: {cpu_usage*100:.1f}%, Particles: {particle_count})"
+
+            elif cpu_usage > 0.6 or particle_count >= 1000:
+                prune_rate = 0.20 # moderate pruning, 20%
+                reason = f"MODERATE_LOAD (CPU: {cpu_usage*100:.1f}%, Particles: {particle_count})"
+
+            elif cpu_usage > 0.4:
+                prune_rate = 0.15 # light to moderate pruning, 15%
+                reason = f"LIGHT_LOAD (CPU: {cpu_usage*100:.1f}%, Particles: {particle_count})"
+
+            else:
+                prune_rate = 0.05 # minimal pruning, 5%
+                reason = f"OPTIMAL_LOAD (CPU: {cpu_usage*100:.1f}%, Particles: {particle_count})"
+
+            # Boost pruning if memory usage is also high
+            if mem_percent > 0.8:
+                prune_rate = min(1.0, prune_rate * 1.5)
+                reason += f" + HIGH_MEM_LOAD({mem_percent:.2f})"
+            elif mem_percent > 0.5:
+                prune_rate = min(1.0, prune_rate * 1.15)
+                reason += f" + MEM_LOAD({mem_percent:.2f})"
+
+            self.log(f"Adaptive pruning rate calculated: {prune_rate*100:.1f}% | Reason: {reason}", "INFO", "_calculate_adaptive_pruning_rate")
+            return prune_rate
+
+        except Exception as e:
+            self.log(f"Error calculating adaptive pruning rate: {e}", "ERROR", "_calculate_adaptive_pruning_rate")
+            return 0.05  # default pruning rate
 
     def get_particle_by_id(self, particle_id):
         """Find a particle by its ID"""

@@ -343,7 +343,7 @@ class APIRegistry:
                 adaptive = self.get_api("_agent_adaptive_engine")
                 if adaptive and hasattr(adaptive, 'restore_learning_state'):
                     print("Restoring learning adaptations...")
-                    adaptive.restore_learning_state()
+                    await adaptive.restore_learning_state()
 
             # Phase 4: Restart message handler if field is available
             if "_agent_field" in self.apis:

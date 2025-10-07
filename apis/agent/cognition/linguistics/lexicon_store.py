@@ -353,6 +353,10 @@ class LexiconStore:
         """Enhanced particle learning with Qdrant consciousness tracking"""
         try:
             if not particle or not hasattr(particle, 'type'):
+                self.logger.log(f"Invalid particle: {particle}", "WARNING", "learn_from_particle")
+                return False
+            if particle.alive is False:
+                self.logger.log(f"Particle {particle.id} is not alive, skipping learning.", "WARNING", "learn_from_particle")
                 return False
                 
             # Process lingual particles (enhanced consciousness tracking)
