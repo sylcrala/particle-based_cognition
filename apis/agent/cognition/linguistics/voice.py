@@ -189,15 +189,18 @@ class MetaVoice:
             try:
                 base_score = 1.0
                 
-                if hasattr(particle, 'superposition'):
+                # Score based on quantum certainty
+                if hasattr(particle, 'superposition') and isinstance(particle.superposition, dict):
                     certainty = particle.superposition.get('certain', 0.5)
                     # Certain particles get higher base score
                     base_score *= (0.5 + certainty * 0.5)
                     
-                if hasattr(particle, 'linked_particles'):
+                # Score based on linkage (connected particles are more relevant)
+                if hasattr(particle, 'linked_particles') and isinstance(particle.linked_particles, dict):
                     linkage_count = len(particle.linked_particles.get('children', []))
                     base_score *= (1.0 + linkage_count * 0.1)
                     
+                # Handle semantic embedding comparison (384D text embeddings)
                 if (hasattr(particle, 'embedding') and 
                     particle.embedding is not None and 
                     input_embedding is not None):
@@ -206,12 +209,53 @@ class MetaVoice:
                         particle_embedding = np.array(particle.embedding)
                         input_embedding_array = np.array(input_embedding)
                         
-                        if particle_embedding.size > 0 and input_embedding_array.size > 0:
+                        # Check if embeddings are compatible dimensions
+                        if (particle_embedding.size > 0 and input_embedding_array.size > 0 and 
+                            particle_embedding.shape == input_embedding_array.shape):
+                            
                             distance = np.linalg.norm(input_embedding_array - particle_embedding)
                             relevance_score = 1 / (1 + distance)  # Closer means more relevant
                             base_score *= relevance_score
+                            
+                        elif particle_embedding.size == 12 and input_embedding_array.size == 384:
+                            # Particle has 12D position embedding, input has 384D text embedding
+                            # Skip direct comparison but use content-based scoring instead
+                            self.log(f"Dimension mismatch: particle={particle_embedding.size}D, input={input_embedding_array.size}D - using content fallback")
+                            
+                            # Try content-based semantic comparison instead
+                            if hasattr(particle, 'token') or hasattr(particle, 'content'):
+                                particle_text = getattr(particle, 'token', getattr(particle, 'content', ''))
+                                if particle_text and isinstance(particle_text, str) and len(particle_text) > 0:
+                                    try:
+                                        # Generate embedding for particle content
+                                        particle_content_embedding = ParticleLikeEmbedding().encode([str(particle_text)])
+                                        if particle_content_embedding and len(particle_content_embedding) > 0:
+                                            particle_content_embedding = particle_content_embedding[0]
+                                            distance = np.linalg.norm(input_embedding_array - np.array(particle_content_embedding))
+                                            relevance_score = 1 / (1 + distance)
+                                            base_score *= relevance_score
+                                    except Exception as content_embedding_error:
+                                        self.log(f"Content embedding fallback error: {content_embedding_error}")
+                        else:
+                            self.log(f"Incompatible embedding dimensions: particle={particle_embedding.shape}, input={input_embedding_array.shape}")
+                            
                     except Exception as embedding_error:
                         self.log(f"Embedding comparison error: {embedding_error}")
+                
+                # Additional scoring factors for particles without compatible embeddings
+                if hasattr(particle, 'activation') and particle.activation > 0.7:
+                    base_score *= 1.2  # Boost highly activated particles
+                    
+                if hasattr(particle, 'energy') and particle.energy > 0.6:
+                    base_score *= 1.1  # Boost high-energy particles
+                    
+                # Recent particles get slight boost
+                if hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
+                    timestamp = particle.metadata.get('timestamp', 0)
+                    if timestamp > 0:
+                        age = time() - timestamp
+                        if age < 60:  # Less than 1 minute old
+                            base_score *= 1.05
                 
                 scored_particles.append((base_score, particle))
                 

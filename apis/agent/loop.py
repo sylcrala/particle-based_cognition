@@ -88,18 +88,9 @@ class CognitionLoop:
                 import traceback
                 self.log(f"Full traceback:\n{traceback.format_exc()}")
 
-            # Get recent particles for reflection
-            particles = self.field.get_all_particles()
-                
-            # Reflect on memory particles
-            for particle in particles:
-                if particle.type == "memory":
-                    await self.meta_voice.reflect(particle)
-                    #await particle.reflect()
 
-                if particle.type == "lingual":
-                    await self.lexicon_store.learn_from_particle(particle)
-
+            # consolidate memories
+            await self.consolidate_memories() 
 
             # Prune low-value particles
             await self.field.prune_low_value_particles()
@@ -166,6 +157,10 @@ class CognitionLoop:
             particles = self.field.get_all_particles()
             active_particles = [p for p in particles if p.id in self.field.alive_particles and p.activation > 0.6]
             
+            # Set attention region
+            if active_particles:
+                self.field.set_conscious_attention(particles=active_particles[:10])
+
             # Process active particles (conscious attention)
             for particle in active_particles[:10]:  # Focus on top 10
                 if hasattr(particle, 'observe'):
@@ -193,26 +188,44 @@ class CognitionLoop:
                 # Increment cycle counter
                 self.subconscious_cycle_count += 1
 
-                # update particle field
-                #result = await self.field.update_particles()
-                #self.log(f"Subconscious loop particle update result: {result}", "DEBUG", "subconscious_loop")
+                if self.field:
+                    # Trigger quantum monitoring every 5 cycles
+                    if self.subconscious_cycle_count % 5 == 0:
+                        await self.monitor_quantum_states(
+                            use_spatial_selection=True,
+                            max_particles=250
+                        )
 
-                # Perform maintenance every 10 cycles (adjustable)
+                # Perform maintenance every 10 cycles 
                 if self.subconscious_cycle_count % 10 == 0:
                     self.log(f"Performing subconscious maintenance cycle {self.subconscious_cycle_count}", 
                             context="subconscious_loop")
                     await self.perform_maintenance_cycle()
                 
-                # Process any pending reflections
-                await self.process_reflection_queue()
-                
-                # Background memory consolidation
+                # Process any pending reflections every 20 cycles
                 if self.subconscious_cycle_count % 20 == 0:
-                    self.consolidate_memories() 
+                    self.log(f"Processing subconscious reflections for cycle {self.subconscious_cycle_count}", 
+                            context="subconscious_loop")
+                    await self.process_reflection_queue()
 
-                
+                # Log and save field state periodically
+                if self.subconscious_cycle_count % 500 == 0:
+                    self.log(f"Saving field state on cycle {self.subconscious_cycle_count}", 
+                            context="subconscious_loop")
+                    try:
+                        self.memory.emergency_save()
+                        self.log("Field state save completed", context="subconscious_loop")
+                    except Exception as e:
+                        self.log(f"Field state save error: {e}", level="ERROR", context="subconscious_loop")
+                        import traceback
+                        self.log(f"Full traceback:\n{traceback.format_exc()}", level="ERROR", context="subconscious_loop")
+
+                    stats = self.field.get_particle_population_stats() if hasattr(self.field, 'get_particle_population_stats') else {}
+                    self.log(f"Field particle population stats: {stats}", 
+                            context="field_monitor_loop")
+
                 # Sleep to prevent excessive CPU usage
-                await asyncio.sleep(0.1)  # Adjust timing as needed
+                await asyncio.sleep(1.0)  # Adjust timing as needed
                 
             except Exception as e:
                 self.log(f"Subconscious loop error: {e}", level="ERROR", context="subconscious_loop")
@@ -224,23 +237,39 @@ class CognitionLoop:
         if self.subconscious_cycle_count < 5:
             return # skip early cycles to allow time for system stabilization
 
+        self.log("Processing reflection queue...", context="process_reflection_queue")
+
         try:
             chance = random.random()
             if chance < 0.315: # ~31.5% chance every cycle
-                self.log("Processing reflection queue...", context="process_reflection_queue")
-                # Get particles that need reflection processing
+                self.log("Processing lingual particle reflections...", context="process_reflection_queue")
                 particles = self.field.get_particles_by_type("lingual")
-                reflection_candidates = [p for p in particles if p.metadata.get("needs_reflection", False)]
+                reflection_candidates = [p for p in particles if p.metadata.get("needs_reflection", False) and p.activation > 0.5]
                 
                 for particle in reflection_candidates[:3]:  # Process a few at a time
                     if hasattr(particle, 'learn_from_particle'):
                         await particle.learn_from_particle(particle)
                         await self.meta_voice.reflect(particle)
                         particle.metadata["needs_reflection"] = False
-                        self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")
-                        
+                        self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")       
+        
+            self.log("lingual particle reflection processing completed", context="process_reflection_queue")
         except Exception as e:
-            self.log(f"Particle reflection processing error: {e}", level="ERROR", context="process_reflection_queue")
+            self.log(f"lingual particle reflection processing error: {e}", level="ERROR", context="process_reflection_queue")
+
+        try:
+            chance = random.random()
+            if chance < 0.315: # ~31.5% chance every cycle
+                self.log("Processing memory particle reflections...", context="process_reflection_queue")
+                particles = self.field.get_particles_by_type("memory")
+                memory_candidates = [p for p in particles if p.activation > 0.5]
+                for particle in memory_candidates[:3]:  # Process a few at a time
+                    await self.meta_voice.reflect(particle)
+                    self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")
+
+                self.log("Memory particle reflection processing completed", context="process_reflection_queue")
+        except Exception as e:
+            self.log(f"Random memory consolidation error: {e}", level="ERROR", context="process_reflection_queue")
 
         try:
             chance = random.random()
@@ -261,26 +290,30 @@ class CognitionLoop:
         except Exception as e:
             self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
 
-        try:
-            chance = random.random()
-            if chance < 0.05: # ~5% chance every cycle
-                self.log("Processing random memory consolidation...", context="process_reflection_queue")
-                await self.consolidate_memories()
-                self.log("Random memory consolidation completed", context="process_reflection_queue")
-        except Exception as e:
-            self.log(f"Random memory consolidation error: {e}", level="ERROR", context="process_reflection_queue")
 
 
-    async def monitor_quantum_states(self):
+    async def monitor_quantum_states(self, use_spatial_selection = True, max_particles = 250):
         """Monitor particle superposition states and trigger collapses"""
         try:
-            particles = self.field.particles
-            self.log(f"Field returned type: {type(particles)}, value: {particles}", "DEBUG", context="monitor_quantum_states")
-            
+            if use_spatial_selection and self.field:
+                conscious_region = self.field.get_conscious_attention_region()
+                background_sectors = self.field.rotate_monitoring_sectors()
+
+                particles = self.field.get_particles_in_region(
+                    primary_region = conscious_region,
+                    secondary_regions = background_sectors,
+                    max_count = max_particles
+                )
+
+                self.log(f"Spatial quantum monitoring: {type(particles)}, value: {particles}", "DEBUG", context="monitor_quantum_states")
+
+            else:
+                particles = self.field.particles
+                self.log(f"Full field quantum monitoring: {type(particles)}, value: {particles}", "DEBUG", context="monitor_quantum_states")
+                
             for particle in particles:
                 if not hasattr(particle, "id"):
-                    self.log(f"Invalid particle detected during quantum monitoring, no ID detected for particle: {type(particle)}", level="ERROR", context="monitor_quantum_states")
-                    continue  # Stop processing if particles are not valid
+                    continue  
                 
                                 
                 # Check if particle has the necessary quantum properties
@@ -342,7 +375,7 @@ class CognitionLoop:
 
 
     async def field_monitor_loop(self):
-        """Quantum field state monitoring and optimization"""
+        """Quantum field state monitoring and optimization - DEPCRECATED"""
         while self.conscious_active:
             try:
 

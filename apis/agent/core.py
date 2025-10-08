@@ -172,7 +172,6 @@ class AgentCore:
                     tasks = [
                         asyncio.create_task(self.particle_field.continuous_particle_updates(), name="particle_field"),
                         asyncio.create_task(self.cognition_loop.conscious_loop(), name="conscious_loop"),
-                        asyncio.create_task(self.cognition_loop.field_monitor_loop(), name="field_monitor"),
                         asyncio.create_task(self.cognition_loop.subconscious_loop(), name="subconscious_loop")
                     ]
                     

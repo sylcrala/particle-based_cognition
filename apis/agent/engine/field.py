@@ -44,11 +44,14 @@ class ParticleField:
         self.certainty_threshold = 0.7
         self.creation_counter = 0       # Track particle creation order for energy cost calculation
         
-        # Spatial indexing for O(log n) neighbor queries
+        # Spatial indexing
         self.grid_size = 0.5  # Grid cell size for spatial partitioning
         self._grid_lock = threading.Lock()
         self.spatial_grid = {}  # grid_key -> [particle_ids]
         self.particle_grid_cache = {}  # particle_id -> grid_key
+        self.sector_rotation_index = 0
+        self.sectors_per_cycle = 10  # Number of sectors to rotate through per update cycle
+        self.conscious_attention_region = None # Where current focus is
 
         self.recent_actions = deque(maxlen=50)
         
@@ -579,13 +582,19 @@ class ParticleField:
             if particle:
                 self.log(f"Created lingual particle {particle.id} for action: {action[:50]}...")
 
+                # Set conscious attention to new particle location (especially for user inputs)
+                if source == "user_input":
+                    self.set_conscious_attention(particles=[particle])
+                    self.log(f"Conscious attention set to user input particle at {particle.position}", "DEBUG", "inject_action")
+
                 # generate via meta voice
                 gen_source = "user_input" if source == "user_input" else source
                 response = await self.voice.generate(str(action), source=gen_source, context_particles=[particle], tags=tags or [], context_id=context_id if context_id else None)
+                return response
 
             else:
                 self.log("Failed to create particle for action", "ERROR")
-                return response
+                return "[Error: Failed to create particle for action]"
         
         elif isinstance(action, dict):
             # Structured action - handle based on action type
@@ -814,7 +823,28 @@ class ParticleField:
         except Exception as e:
             self.log(f"Grid key generation error: {e}", "ERROR", "_get_grid_key")
             return (0, 0, 0)  # Fallback
-    
+        
+    def get_all_grid_sectors(self):
+        """Get a list of all active grid sectors"""
+        with self._grid_lock:
+            return list(self.spatial_grid.keys())
+        
+    def rotate_monitoring_sectors(self):
+        """Rotate through grid sectors for monitoring"""
+        all_sectors = self.get_all_grid_sectors()
+        if not all_sectors:
+            return None
+        
+        # rotate through all sectors
+        start_index = self.sector_rotation_index
+        end_index = min(start_index + self.sectors_per_cycle, len(all_sectors))
+        selected_sectors = all_sectors[start_index:end_index]
+
+        # update rotation index
+        self.sector_rotation_index = end_index % len(all_sectors)
+
+        return selected_sectors
+
     def _update_spatial_index(self, particle):
         """Thread-safe spatial grid update"""
         with self._grid_lock:  # ← Add thread safety
@@ -839,6 +869,67 @@ class ParticleField:
                 
             except Exception as e:
                 self.log(f"Spatial index error: {e}", "ERROR", "_update_spatial_index")
+
+    def set_conscious_attention(self, particles = None, region = None):
+        """Called by conscious loop to direct subconscious focus"""
+        if particles:
+            positions = [p.position for p in particles if hasattr(p, 'position')]
+            if positions:
+                centroid = np.mean(positions, axis=0)
+                self.conscious_attention_region = self._get_grid_key(centroid)
+        elif region:
+            self.conscious_attention_region = region
+
+    def get_conscious_attention_region(self):
+        """Determine spatial region where conscious processing is focused"""
+        try:
+            if self.conscious_attention_region is not None:
+                if isinstance(self.conscious_attention_region, (list, tuple)) and len(self.conscious_attention_region) == 2:
+                    return self.conscious_attention_region
+                else:
+                    self.log("Invalid conscious_attention_region format, resetting to None", "WARNING", "get_conscious_attention_region")
+                    self.conscious_attention_region = None
+
+            # Fallback to regions with high activation 
+            recent_particles = [p for p in self.particles if p.activation > 0.6 and p.id in self.alive_particles]    
+            if recent_particles:
+                # calculate centroids
+                positions = np.array([p.position for p in recent_particles])    
+                centroid = np.mean(positions, axis=0)
+                return self._get_grid_key(centroid)
+
+        except Exception as e:
+            self.log(f"Attention region error: {e}", "ERROR", "get_conscious_attention_region")
+            import traceback
+            self.log(f"Attention region traceback: {traceback.format_exc()}", "ERROR", "get_conscious_attention_region")
+            return None
+
+    def get_particles_in_region(self, primary_region = None, secondary_regions = None, max_count = 200):
+        """Get particles within specified spatial regions with priority"""
+        selected_particles = []
+
+        # high priority: particles in conscious attention region
+        if primary_region and primary_region in self.spatial_grid:
+            primary_ids = list(self.spatial_grid[primary_region])[:max_count//2]
+            for pid in primary_ids:
+                particle = self.get_particle_by_id(pid)
+                if particle and particle.alive:
+                    selected_particles.append(particle)
+
+        # fill with particles from secondary regions / background rotation sectors
+        if secondary_regions and len(selected_particles) < max_count:
+            remaining_slots = max_count - len(selected_particles)
+            for region in secondary_regions:
+                if region in self.spatial_grid:
+                    region_ids = list(self.spatial_grid[region])[:remaining_slots//len(secondary_regions)]
+                    for pid in region_ids:
+                        if pid not in [p.id for p in selected_particles]:
+                            particle = self.get_particle_by_id(pid)
+                            if particle and particle.alive:
+                                selected_particles.append(particle)
+                                
+        return selected_particles
+        
 
     def get_spatial_neighbors(self, particle, radius=0.6):
         """Thread-safe efficient spatial neighbor search"""
