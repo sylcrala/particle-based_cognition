@@ -19,7 +19,6 @@ class CognitionLoop:
         self.memory = memory
         self.meta_voice = voice
         self.lexicon_store = lexicon
-        self.system_metrics_api = api.get_api("system_metrics")
 
         try:
             self.config = api.get_api("config")
@@ -72,25 +71,11 @@ class CognitionLoop:
             if not self.field:
                 return
             
-            # Spawn a sensory particle to monitor system metrics
-            try:
-                sensory_p = await self.field.spawn_particle(
-                    type="sensory",
-                    energy=0.5,
-                    activation=0.3,
-                )
-                if sensory_p:
-                    sensory_p.process_environmental_input(
-                        input_type = "metrics"
-                    )
-            except Exception as e:
-                self.log(f"Sensory particle spawn error: {e}", level="ERROR", context="perform_maintenance_cycle")
-                import traceback
-                self.log(f"Full traceback:\n{traceback.format_exc()}")
+            await self.events.emit_event("system_events", "system_metrics request", source="perform_maintenance_cycle")
 
 
             # consolidate memories
-            await self.consolidate_memories() 
+            await self.events.emit_event("memory_consolidation", "Request to consolidate recent memories", source="perform_maintenance_cycle")
 
             # Prune low-value particles
             await self.field.prune_low_value_particles()
@@ -187,6 +172,7 @@ class CognitionLoop:
             try:
                 # Increment cycle counter
                 self.subconscious_cycle_count += 1
+                chance = random.random()
 
                 if self.field:
                     # Trigger quantum monitoring every 5 cycles
@@ -201,19 +187,19 @@ class CognitionLoop:
                     self.log(f"Performing subconscious maintenance cycle {self.subconscious_cycle_count}", 
                             context="subconscious_loop")
                     await self.perform_maintenance_cycle()
-                
-                # Process any pending reflections every 20 cycles
-                if self.subconscious_cycle_count % 20 == 0:
+
+                # Process any pending reflections every 20 cycles or ~5% chance
+                if self.subconscious_cycle_count % 20 == 0 or chance < 0.05:
                     self.log(f"Processing subconscious reflections for cycle {self.subconscious_cycle_count}", 
                             context="subconscious_loop")
-                    await self.process_reflection_queue()
+                    await self.events.emit_event("reflection_triggered", "Request to process particle reflections", source="subconscious_loop")
 
                 # Log and save field state periodically
                 if self.subconscious_cycle_count % 500 == 0:
                     self.log(f"Saving field state on cycle {self.subconscious_cycle_count}", 
                             context="subconscious_loop")
                     try:
-                        self.memory.emergency_save()
+                        self.memory.emergency_save() # FIXME: change to emit_event call for core particle
                         self.log("Field state save completed", context="subconscious_loop")
                     except Exception as e:
                         self.log(f"Field state save error: {e}", level="ERROR", context="subconscious_loop")
@@ -233,7 +219,7 @@ class CognitionLoop:
 
 
     async def process_reflection_queue(self):
-        """Process reflection queue for particle learning"""
+        """Process reflection queue for particle learning - DEPRECATED"""
         if self.subconscious_cycle_count < 5:
             return # skip early cycles to allow time for system stabilization
 
@@ -409,8 +395,11 @@ class CognitionLoop:
                 self.log(f"Field monitoring error: {e}", level="ERROR", context="field_monitor_loop")
                 await asyncio.sleep(10.0)
 
+
+
+
     async def consolidate_memories(self):
-        """Consolidate recent memories and update long-term storage"""
+        """Consolidate recent memories and update long-term storage - DEPRECATED"""
         try:
             if not self.memory:
                 return

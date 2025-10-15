@@ -23,7 +23,11 @@ class LingualParticle(Particle):
         self.token = token or self.metadata.get("token")                                         # stored message
         self.embedding = self._message_to_vector(self.token)   # embedded vector for message
         self.ext_res = api.get_api("external_resources")
-        
+
+        self.metadata.setdefault("token", self.token or "")
+        self.metadata.setdefault("content", self.token or "")
+        self.metadata.setdefault("source", source)
+
         self.lexicon_id = None
 
         self.particle_source = None                                                     # particle injection source
@@ -198,16 +202,18 @@ class LingualParticle(Particle):
         self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
 
 
-    async def learn_from_particle(self, particle):
+    async def learn_from_particle(self, particle=None):
 
         if not particle or not hasattr(particle, 'type'):
-            self.log(f"Invalid particle: {particle}", "WARNING", "learn_from_particle")
-            return False
-        if particle.alive is False:
-            self.log(f"Particle {particle.id} is not alive, skipping learning.", "WARNING", "learn_from_particle")
-            return False
+            self.log(f"Invalid particle: {particle}, learning from self instead", "WARNING", "learn_from_particle")
+            particle = self
+        elif particle.alive is False:
+            self.log(f"Particle {particle.id} is not alive, learning from self instead.", "WARNING", "learn_from_particle")
+            particle = self
+        else:
+            particle = particle
 
-        text = self.expression
+        text = particle.expression
         tone = particle.traits.get("tone")
         origin = particle.traits.get("origin")
         now = datetime.now().timestamp()

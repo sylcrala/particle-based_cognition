@@ -22,8 +22,12 @@ from apis.agent.utils.embedding import ParticleLikeEmbedding
 class MemoryBank:
     def __init__(self, field = None):
         self.logger = api.get_api("logger")
-        self.mempath = "./data/agent/memory_matrix"
-        
+        self.config = api.get_api("config")
+        self.agent_config = self.config.get_agent_config() if self.config else {}
+
+        self.base_mem_path = self.agent_config.get("memory_dir")
+        self.mempath = f"{self.base_mem_path}/memory_matrix/"
+
         try:
             self.field = field
             os.makedirs(os.path.dirname(self.mempath), exist_ok=True)
@@ -662,7 +666,8 @@ class MemoryBank:
                     continue
             
             # Save additional state information
-            state_file = "./data/agent/memory_shutdown_state.json"
+            base_path = self.agent_config.get("memory_dir")
+            state_file = f"{base_path}/memory_shutdown_state.json"
             os.makedirs(os.path.dirname(state_file), exist_ok=True)
             shutdown_state = {
                 "timestamp": now,
@@ -838,7 +843,7 @@ class MemoryBank:
             }
             
             # Store in consolidated collection
-            point_id = f"consolidated_{str(particle.id)}"
+            point_id = f"{str(particle.id)}"
             
             # Generate embedding from particle data
             embedding_text = f"consolidated {particle.type} particle {particle.id} {particle.metadata}"
@@ -881,6 +886,24 @@ class MemoryBank:
         except Exception as e:
             self.log(f"Error consolidating particle memory: {e}", "ERROR", "consolidate_particle_memory")
             return False
+
+    async def consolidate_memories(self):
+        """Consolidate recent memories and update long-term storage"""
+        try:
+                
+            # Get recent high-activation particles for memory consolidation  
+            if self.field:
+                particles = self.field.get_all_particles()
+                high_activation = [p for p in particles if hasattr(p, 'activation') and p.activation > 0.65]
+                
+                for particle in high_activation[:15]:  # Consolidate top 15
+                    if hasattr(particle, 'metadata') and particle.metadata:
+                        await self.consolidate_particle_memory(particle)
+
+            self.log(f"Memory consolidation completed for {len(high_activation)} particles", "DEBUG", "consolidate_memories")
+
+        except Exception as e:
+            self.log(f"Memory consolidation error: {e}", "ERROR", "consolidate_memories")
 
     async def get_consolidated_memories(self, particle_type: str = None, limit: int = 10) -> List[Dict]:
         """Retrieve consolidated memories with filtering"""

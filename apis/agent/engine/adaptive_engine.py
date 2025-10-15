@@ -29,6 +29,8 @@ class AdaptiveDistanceEngine:
         self.memory = {}  # (id_a, id_b): interaction_score
         self.embeddings = {}  # id: xp.array (cupy or numpy)
 
+        self.agent_config = config.get_agent_config() if config else {}
+
 
         from apis.agent.utils.policies import strategies
         self.strategies = strategies
@@ -290,7 +292,8 @@ class AdaptiveDistanceEngine:
             }
 
             # Safe file operations
-            state_file = "./data/agent/adaptive_shutdown_state.json"
+            base_path = self.agent_config.get("memory_dir")
+            state_file = f"{base_path}/adaptive_shutdown_state.json"
             os.makedirs(os.path.dirname(state_file), exist_ok=True)
             
             # Write to temporary file first, then rename (atomic operation)
@@ -316,8 +319,9 @@ class AdaptiveDistanceEngine:
         Restore adaptive learning state from previous session - ENHANCED VERSION
         """
         try:
-            state_file = "./data/agent/adaptive_shutdown_state.json"
-            
+            base_path = self.agent_config.get("memory_dir")
+            state_file = f"{base_path}/adaptive_shutdown_state.json"
+
             if not os.path.exists(state_file):
                 self.log("No previous learning state found, starting fresh", level="INFO", context="restore_learning_state")
                 return True

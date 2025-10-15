@@ -3,11 +3,14 @@ Centralized core module for agent initialization and management.
 """
 import asyncio
 import datetime
+import heapq
+import time
+import concurrent
+import traceback
 from apis.api_registry import api
+from apis.agent.event_handler import EventHandler
 
-  
-
-
+events = None
 
 class AgentCore:
     def __init__(self):
@@ -20,39 +23,64 @@ class AgentCore:
         self.memory_bank = MemoryBank(field = None)
         self.log("MemoryBank imported successfully", context="AgentCore.__init__")
 
-        self.log("Importing EventHandler...", context="AgentCore.__init__")
-        from apis.agent.event_handler import EventHandler
-        self.event_handler = EventHandler(memory = self.memory_bank, field = None)
-        self.log("EventHandler imported successfully", context="AgentCore.__init__")
+        #self.log("Importing EventHandler...", context="AgentCore.__init__")
+        #self.event_handler = EventHandler(memory=self.memory_bank, field=None)
+        #self.log("EventHandler imported successfully", context="AgentCore.__init__")
 
         self.log("Importing AdaptiveDistanceEngine...", context="AgentCore.__init__")
         from apis.agent.engine.adaptive_engine import AdaptiveDistanceEngine
         self.adaptive_engine = AdaptiveDistanceEngine()
         self.log("AdaptiveDistanceEngine imported successfully", context="AgentCore.__init__")
 
+        self.log("Initializing AgentAnchor...", context="AgentCore.__init__")
+        self.agent_anchor = AgentAnchor(memory=self.memory_bank, field=None)
+        self.log("AgentAnchor initialized successfully", context="AgentCore.__init__")
+
         self.log("Importing ParticleField...", context="AgentCore.__init__")
         from apis.agent.engine.field import ParticleField  
-        self.particle_field = ParticleField(adaptive_engine = self.adaptive_engine, event_handler = self.event_handler, memory_bank= self.memory_bank)
+        self.particle_field = ParticleField(
+            adaptive_engine = self.adaptive_engine, 
+            event_handler = self.agent_anchor, 
+            memory_bank= self.memory_bank
+        )
         self.log("ParticleField imported successfully", context="AgentCore.__init__")
         
         self.log("Importing LexiconStore...", context="AgentCore.__init__")
         from apis.agent.cognition.linguistics.lexicon_store import LexiconStore  
-        self.lexicon_store = LexiconStore(adaptive_engine = self.adaptive_engine, memory = self.memory_bank)
+        self.lexicon_store = LexiconStore(
+            adaptive_engine = self.adaptive_engine, 
+            memory = self.memory_bank
+        )
         self.log("LexiconStore imported successfully", context="AgentCore.__init__")
 
         self.log("Importing MetaVoice...", context="AgentCore.__init__")
         from apis.agent.cognition.linguistics.voice import MetaVoice  
-        self.meta_voice = MetaVoice(field = self.particle_field, memory = self.memory_bank, lexicon = self.lexicon_store, model_handler = None)
+        self.meta_voice = MetaVoice(
+            field = self.particle_field, 
+            memory = self.memory_bank, 
+            lexicon = self.lexicon_store, 
+            model_handler = None
+        )
         self.log("MetaVoice imported successfully", context="AgentCore.__init__")
 
         self.log("Importing ModelHandler...", context="AgentCore.__init__")
         from apis.model.model_handler import ModelHandler
-        self.model_handler = ModelHandler(events = self.event_handler, meta_voice = self.meta_voice)
+        self.model_handler = ModelHandler(
+            events = self.agent_anchor, 
+            meta_voice = self.meta_voice
+        )
         self.log("ModelHandler imported successfully", context="AgentCore.__init__")
         
         self.log("Importing CognitionLoop...", context="AgentCore.__init__")
         from apis.agent.loop import CognitionLoop
-        self.cognition_loop = CognitionLoop(events = self.event_handler, field = self.particle_field, adaptive_engine = self.adaptive_engine, memory = self.memory_bank, voice = self.meta_voice, lexicon = self.lexicon_store)
+        self.cognition_loop = CognitionLoop(
+            events = self.agent_anchor, 
+            field = self.particle_field, 
+            adaptive_engine = self.adaptive_engine, 
+            memory = self.memory_bank, 
+            voice = self.meta_voice, 
+            lexicon = self.lexicon_store
+        )
         self.log("CognitionLoop imported successfully", context="AgentCore.__init__")
 
         self.log("Importing and registering external resources...", context="AgentCore.__init__")
@@ -61,8 +89,9 @@ class AgentCore:
         self.log("ExternalResources imported and registered successfully", context="AgentCore.__init__")
 
         self.log("Agent Core module imports complete, finalizing module threading", context="AgentCore.__init__")
-        # event threading
-        self.event_handler.field = self.particle_field
+
+        # anchor threading
+        self.agent_anchor.field = self.particle_field
         # memory threading
         self.memory_bank.field = self.particle_field
         # field threading
@@ -73,10 +102,6 @@ class AgentCore:
 
         self._running = False
         self.log("Agent Core initialization complete", context="AgentCore.__init__")
-    
-
-
-
 
         
     def log(self, message, level = None, context = None, source = None):
@@ -109,12 +134,17 @@ class AgentCore:
         api.register_api("_agent_lexicon", self.lexicon_store)
         api.register_api("_agent_meta_voice", self.meta_voice)
         api.register_api("_agent_adaptive_engine", self.adaptive_engine)
-        api.register_api("_agent_events", self.event_handler)
+        api.register_api("_agent_events", self.agent_anchor)
+        api.register_api("_agent_anchor", self.agent_anchor)
         api.register_api("_agent_model_handler", self.model_handler)
+
+        await self.agent_anchor.initialize()
+        #if self.agent_anchor.running: - moved to field
+            #await self.agent_anchor.spawn_identity_cores()
 
         print("systems check: ")
         print(f"Registered APIs: {api.list_apis()}")
-        self.log(f"Registered APIs: {api.list_apis()}", "INFO", "initialize()")
+        self.log(f"System Startup Final Report: \n\nRegistered APIs: \n{api.list_apis()}", "INFO", "initialize()")
 
         self._running = True
 
@@ -125,7 +155,6 @@ class AgentCore:
             self.log("Agent Core initializing cognitive processes...", context="run")
             
             await self.initialize()
-            await self.event_handler.initialize()
             #await self.memory_bank.verify_memory_system_health()               # **DEBUG** for testing DB health in the case of issues
             
             # Restoring previous state
@@ -134,7 +163,6 @@ class AgentCore:
                 self.log("Previous cognitive state restored", context="run")
             except Exception as e:
                 self.log(f"State restoration error: {e}", level="ERROR", context="run")
-                import traceback
                 self.log(f"Full traceback:\n{traceback.format_exc()}")
                 raise Exception(f"Error: {e} \n\n Traceback: {traceback.format_exc()}")
 
@@ -149,7 +177,6 @@ class AgentCore:
             module_status = {
                 "model_handler": "ONLINE" if self.model_handler else "OFFLINE",
                 "cognition_loop": "ONLINE" if self.cognition_loop else "OFFLINE",
-                "events_handler": "ONLINE" if self.event_handler else "OFFLINE",
                 "particle_field": "ONLINE" if self.particle_field else "OFFLINE",
                 "memory_bank": "ONLINE" if self.memory_bank else "OFFLINE",
                 "meta_voice": "ONLINE" if self.meta_voice else "OFFLINE",
@@ -229,7 +256,6 @@ class AgentCore:
 
         except Exception as e:
             self.log(f"Runtime error: {e}", level="ERROR", context="run")
-            import traceback
             self.log(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="run")
             self._running = False
             self.cognition_loop.conscious_active = False
@@ -239,7 +265,7 @@ class AgentCore:
     def shutdown(self):
         """Externally-callable method to stop the agent"""
         self.log("External shutdown requested", context="shutdown")
-        api.handle_shutdown()
+        asyncio.run(api.handle_shutdown())
         self._running = False
         self.cognition_loop.conscious_active = False
         
@@ -247,69 +273,603 @@ class AgentCore:
             if not task.done():
                 task.cancel()
 
-    def handle_agent_message(self, message: str, source: str = None, 
-                           tags: list = None, timeout: float = 60.0) -> str:
+
+
+class AgentAnchor:
+    def __init__(self, memory = None, field = None):
+        # Event handling properties
+        self.event_queue = PriorityEventQueue()
+        self.event_handlers = {}
+        self.initialized = False
+        self.running = False
+        self.event_loop_task = None
+        self.start_time = 0
+        self._agent_loop = None
+        self.logger = api.get_api("logger")
+
+        # Core particle properties
+        self.permanent_cores = []
+        self.temporary_cores = []
+        self.core_roles = {
+            "self_modeling": None,
+            "memory_coordination": None,
+            "decision_making": None,
+            "social_interaction": None,
+            "system_monitoring": None,
+            "reflection": None,
+            "identity_anchor": None
+        }
+
+        # References
+        self.field = field
+        self.memory = memory
+
+        # Initialize default event handlers
+        self.register_default_handlers()
+
+    def log(self, message, level="INFO", context=None):
+        """Use shared logging system"""
+        context = context or "no_context"
+            
+        if self.logger:
+            self.logger.log(message, level, context, "AgentAnchor")
+        else:
+            print(f"[{level}] {message}")  # Fallback
+
+    async def spawn_identity_cores(self):
+        """Spawns permanent core identity anchor particles if not already present - DEPRECATED / MOVED TO FIELD"""
+        for role in ["memory_coordination", "decision_making", "social_interaction", "system_monitoring", "reflection", "identity_anchor"]:
+
+            core = await self.spawn_particle(
+                type="core",
+                metadata={"role": role, "persistence_lvl": "permanent"},  
+                energy=1.0,
+                activation=0.9,
+                emit_event=False
+            )
+            if core:
+                self.permanent_cores.append(core)
+                self.core_roles[role] = core
+                self.log(f"Spawned core particle for role: {role} with ID: {core.id}", "INFO", "spawn_identity_cores")
+            else:
+                self.log(f"Failed to spawn core particles for role: {role}", "ERROR", "spawn_identity_cores")
+    
+    def get_core_by_role(self, role):
+        """Retrieve core particle by its assigned role"""
+        try:
+            self.log(f"Retrieving core for role: {role}", "DEBUG", "get_core_by_role")
+            particle_list = self.permanent_cores + self.temporary_cores
+            for core in particle_list:
+                if core.metadata.get("role") == role:
+                    self.log(f"Core found for role {role}: ID {core.id}", "DEBUG", "get_core_by_role")
+                    return core
+        except Exception as e:
+            self.log(f"Error retrieving core for role {role}: {e}", "ERROR", "get_core_by_role")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", "get_core_by_role")
+
+
+    ### event handling methods ###
+
+    def register_default_handlers(self):
+        """Register default event handlers for common events"""
+        self.event_handlers.update({
+            "particle_created": self.handle_particle_created,
+            "user_input": self.handle_user_input,
+            "system_idle": self.handle_system_idle,
+            "system_events": self.handle_system_events,
+            "shutdown": self.handle_shutdown,
+            "reflection_triggered": self.handle_reflection,
+            "reflection_request": self.handle_reflection,
+            "cognitive_event": self.handle_cognitive_event,
+            "memory_event": self.handle_memory_event
+        })
+    
+    async def emit_event(self, event_type, data=None, source="unknown", priority=None):
+        """Emit an event with optional priority"""
+        try:
+            event = {
+                "type": event_type,
+                "data": data,
+                "source": source,
+                "timestamp": datetime.datetime.now().timestamp()
+            }
+            
+            if priority is None:
+                priority = self.get_default_priority(event_type, source)
+            """
+            # temporary per-task routing logic for core particles until full-autonomous framework is integrated
+            if event_type == "user_input": ##
+                handling_core = self.get_core_by_role("social_interaction")
+                if handling_core:
+                    result = await self.handle_event_through_core(handling_core, event)
+                    self.log(f"User input event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                    return result
+                else:
+                    result = await self.handle_event(event)
+                    self.log(f"User input event handled directly, no core assigned", "DEBUG", context="emit_event")
+                    return result
+            elif event_type == "system_metrics": ##
+                handling_core = self.get_core_by_role("system_monitoring")
+                if handling_core:
+                    result = await self.handle_event_through_core(handling_core, event)
+                    self.log(f"System metrics event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                    return result
+                else:
+                    result = await self.handle_event(event)
+                    self.log(f"System metrics event handled directly, no core assigned", "DEBUG", context="emit_event")
+                    return result
+            elif event_type in ["reflection_triggered", "self_modeling"]: ##
+                handling_core = self.get_core_by_role("reflective_thoughts")
+                if handling_core:
+                    result = await self.handle_event_through_core(handling_core, event)
+                    self.log(f"Reflection event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                    return result
+                else:
+                    result = await self.handle_event(event)
+                    self.log(f"Reflection event handled directly, no core assigned", "DEBUG", context="emit_event")
+                    return result    
+                
+            elif event_type == "memory_consolidation":
+                handling_core = self.get_core_by_role("memory_coordination")
+                if handling_core:
+                    result = await self.handle_event_through_core(handling_core, event)
+                    self.log(f"Memory consolidation event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                    return result
+                else:
+                    result = await self.handle_event(event)
+                    self.log(f"Memory consolidation event handled directly, no core assigned", "DEBUG", context="emit_event")
+                    return result
+            """
+
+            await self.event_queue.put(event, priority=priority)
+            self.log(f"Event emitted: {event_type} from {source}", "DEBUG", context="emit_event")
+
+        except Exception as e:
+            self.log(f"Error emitting event {event_type} from {source}: {e}", "ERROR", context="emit_event")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="emit_event")
+            return None
+    
+    async def handle_event_through_core(self, core, event):
+        """Route event to specified core for handling"""
+        if not core:
+            self.log("No core available for event handling, routing to direct handler", "WARNING", context="handle_event_through_core")
+            return await self.handle_event(event)
+        
+        # Let core handle event autonomously if it can
+        if hasattr(core, 'handle_event'):
+            result = await core.handle_event(event)
+            if result is not None:
+                return result
+        
+        # Fallback to standard handling with core context
+        if hasattr(core, "decision_history"):
+            core.decision_history.append({
+                "event_type": event['type'],
+                "timestamp": datetime.datetime.now(),
+                "data_summary": str(event['data'])[:100]
+            })
+        
+        return await self.handle_event(event, core_particle=core)
+
+    def send_message(self, message: str, source: str = None) -> str:
         """
         MAIN API: Handle agent message with response        
         """
-        """
-        # testing async call from sync context for emit_event, if it doesnt work try below method
+
+        return self.emit_event_sync(message, "user_input", source or "api_registry")
+
+    def emit_event_sync(self, data, event_type, source="unknown", timeout=300.0): ##
+        """Syncronous routing to emit_event"""
         try:
-            future = asyncio.gather(
-                self.event_handler.emit_event("user_input", message, source or "api_registry", 1),
-                return_exceptions=True
-            )
-            return future
-        except RuntimeError:
-            return asyncio.run(self.event_handler.emit_event("user_input", message, source or "api_registry", 1))
-
-        """
-        try:
-            # Ensure event handler has loop reference
-            if not hasattr(self.event_handler, '_agent_loop') or self.event_handler._agent_loop is None:
-                self.log("Event handler missing loop reference, attempting to set", "WARNING", "handle_agent_message")
-                # Try to get the loop from a known async context
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        self.event_handler._agent_loop = loop
-                except:
-                    pass
-
-            # Generate unique message ID
-            message_id = f"msg_{int(datetime.datetime.now().timestamp() * 1000)}"
-
-            # Prepare message data
-            message_data = {
-                'id': message_id,
-                'message': message,
-                'source': source,
-                'tags': tags or ['gui_message'],
-                'timestamp': datetime.datetime.now().timestamp()
-            }
-
-            message = message_data['message']
-            source = message_data.get('source', 'api_registry')
+            if not hasattr(self, '_agent_loop'):
+                self.log("No event loop available for sync event emission", "ERROR", "emit_event_sync")
+                return "Error: No event loop available"
 
             try:
-                self.log("Using handle_event_sync for event processing", "DEBUG", "_process_agent_message")
-                result = self.event_handler.handle_event_sync(message, "user_input", source)
-                if result:
-                    # Handle different response formats
-                    if hasattr(result, 'content'):
-                        return str(result.content)
-                    elif hasattr(result, 'token'):
-                        return str(result.token)
-                    elif isinstance(result, str):
+                future = asyncio.run_coroutine_threadsafe(
+                    self.emit_event(event_type, data, source),
+                    self._agent_loop
+                )
+                result = future.result(timeout=timeout)
+                return result
+            
+            except concurrent.futures.TimeoutError:
+                self.log("Timeout in sync event emission", "ERROR", "emit_event_sync")
+                return "Error: Timeout"
+        except Exception as e:
+            self.log(f"Error in sync event emission: {e}", "ERROR", "emit_event_sync")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", "emit_event_sync")
+            return f"Error: {e}"
+    
+    async def get_events_by_type(self, event_type):
+        """Retrieve events of a specific type without removing them"""
+        return [event for _, _, event in self.event_queue._queue if event["type"] == event_type]
+    
+    def register_listener(self, event_type, callback, once=False):
+        """Register a callback for a specific event type"""
+        async def listener(event):
+            await callback(event)
+            if once:
+                self.event_handlers.pop(event_type, None)
+        
+        self.event_handlers[event_type] = listener
+        self.log(f"Listener registered for event type: {event_type}", "DEBUG", context="register_listener")
+
+    def get_default_priority(self, event_type, source):
+        """Get default priority for different event types"""
+        priority_map = {
+            "user_input": 1,
+            "shutdown": 0,
+            "particle_created": 3,
+            "system_idle": 8,
+            "system_events": 7,
+            "cognitive_event": 5,
+            "reflection_triggered": 6, # internal trigger for reflection
+            "reflection_request": 4, # external request for reflection
+            "memory_consolidation": 6
+        }
+        
+        base_priority = priority_map.get(event_type, 5)
+        
+        # User events get higher priority
+        if source == "user":
+            base_priority = min(base_priority, 2)
+            
+        return base_priority
+    
+    async def handle_event(self, event, core_particle = None):
+        """Central event dispatcher"""
+        current_time = datetime.datetime.now().timestamp()
+        if hasattr(self, "start_time") and current_time - self.start_time < 5.0:
+            self.log("Skipping event handling during startup stabilization period", "DEBUG", context = "handle_event")
+            return "Please retry after stabilization period."
+
+
+        event_type = event["type"]
+
+        self.log(f"Handling event: {event_type} from {event['source']}", context="handle_event")
+
+        # Find and execute handler
+        handler = self.event_handlers.get(event_type, self.handle_unknown_event)
+        
+        try:
+            if core_particle:
+                result = await handler(event, core_particle)
+            else:
+                result = await handler(event)
+            return result
+        except Exception as e:
+            self.log(f"Error handling event {event_type}: {e}", "ERROR", context="handle_event")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_event")
+            return None
+    
+    def handle_event_sync(self, data, event_type, source="unknown"): ##
+        """Syncronous event handler for thread-safe GUI""" 
+        try:
+            event = {
+                "type": event_type,
+                "data": data,
+                "source": source,
+                "timestamp": datetime.datetime.now().timestamp()
+            }
+
+            if not hasattr(self, '_agent_loop'):
+                self.log("No event loop available for sync event handling", "ERROR", "handle_event_sync")
+                return "Error: No event loop available"
+
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.handle_event(event),
+                    self._agent_loop
+                )
+                result = future.result(timeout=120.0)
+                return result
+            
+            except concurrent.futures.TimeoutError:
+                self.log("Timeout in sync event handling", "ERROR", "handle_event_sync")
+                return "Error: Timeout"
+            except Exception as e:
+                self.log(f"Error in sync event handling: {e}", "ERROR", "handle_event_sync")
+                self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", "handle_event_sync")
+                return f"Error: {e}"
+
+        except Exception as e:
+            self.log(f"Sync event handling error: {e}", "ERROR", "handle_event_sync")
+            return f"Error: {e}"
+
+    async def handle_memory_event(self, event, core_particle = None):
+        """Handle memory-related events"""
+        event_type = event["type"]
+        event_data = event["data"]
+        self.log(f"Memory event received: {event_type}", "DEBUG", context="handle_memory_event")
+
+        # Could route to specialized memory system
+        if event_type == "memory_consolidation":
+            try:
+                self.log("Starting memory consolidation process without core particles...", "DEBUG", "handle_memory_event")
+                if not self.memory:
+                    self.log("No memory system available for consolidation", "ERROR", "handle_memory_event")
+                    return
+                
+                    
+                # Get recent high-activation particles for memory consolidation  
+                if self.field:
+                    particles = self.field.get_all_particles()
+                    high_activation = [p for p in particles if hasattr(p, 'activation') and p.activation > 0.65]
+                    
+                    for particle in high_activation[:15]:  # Consolidate top 15
+                        if hasattr(particle, 'metadata') and particle.metadata:
+                            await self.memory.consolidate_particle_memory(particle)
+
+                self.log(f"Memory consolidation completed for {len(high_activation)} particles", "DEBUG", "handle_memory_event")
+                return True
+
+            except Exception as e:
+                self.log(f"Memory consolidation error: {e}", "ERROR", "handle_memory_event")
+
+        elif event_type == "memory_retrieval":
+            # TODO
+            pass
+
+        elif event_type == "memory_store":
+            # TODO
+            pass
+
+        elif event_type == "emergency_state_save":
+            # TODO
+            pass
+
+
+        return False
+
+    async def handle_particle_created(self, event, core_particle = None):
+        """Handle particle creation events"""
+        particle_data = event["data"]
+        try:
+            await self.field.spawn_particle(
+                type=particle_data.get("type", "unknown"),
+                metadata=particle_data.get("metadata", {}),
+                energy=particle_data.get("energy", 0.5),
+                activation=particle_data.get("activation", 0.5),
+                source_particle_id=core_particle.id if core_particle else None,
+                emit_event=False  # Avoid recursive event emission
+            )
+            self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}", "DEBUG", context="handle_particle_created")
+            return True
+        except Exception as e:
+            self.log(f"Error creating particle: {e}", "ERROR", context="handle_particle_created")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_particle_created")
+            return False
+
+    
+    async def handle_user_input(self, event, core_particle = None):
+        """Handle user input events"""
+        try:
+            handling_core = self.get_core_by_role("social_interaction")
+            if handling_core:
+                result = await self.handle_event_through_core(handling_core, event)
+                self.log(f"User input event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                return result
+            
+        except Exception as e:
+            self.log(f"Error routing user input through core: {e} | handling input directly", "ERROR", context="handle_user_input")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_user_input")
+
+            user_data = event["data"]
+            
+            # Check for shutdown commands
+            if isinstance(user_data, str) and user_data.lower() in ("exit", "quit", "shutdown"):
+                await self.emit_event("shutdown", {"reason": "user_request"}, source="user")
+                self.log("Shutdown command received from user input", "SYSTEM", "handle_user_input")
+                return "Shutdown initiated"
+            
+            config = api.get_api("config")
+            if config and config.user_name:
+                user_name = config.user_name
+            else:
+                user_name = "Unknown User"
+
+            # Route to particle field for processing
+            field = self.field
+            if field:
+                try:
+                    input_for_agent = f"{user_name} said: <s>{user_data}</s>"
+                    result = await field.inject_action(input_for_agent, source="user_input", source_particle_id=core_particle.id if core_particle else None)
+                    
+                    if result:
+                        self.log(f"User input processed, response generated: {result}", "DEBUG", context="handle_user_input")
                         return result
                     else:
-                        return str(result)
-                else:
-                    return "I processed your message but didn't generate a response."
-                
-            except Exception as injection_error:
-                return f"Event handling error: {injection_error}"
-                
-        except Exception as e:
-            return f"Message processing error: {e}"
+                        self.log("No response generated for user input", "WARNING", context="handle_user_input")
+                        return "[System] No response available."
+                        
+                except Exception as e:
+                    self.log(f"Error processing user input: {e}", "ERROR", context="handle_user_input")
+                    self.log(f"Full traceback:\n{traceback.format_exc()}")
+                    return "[System] Error processing input."
+            else:
+                self.log("No particle field available for user input", "ERROR", context="handle_user_input")
+                return "[System] Cognitive system unavailable."
             
+    async def handle_system_events(self, event, core_particle = None):
+        """Handle general system events"""
+        event_type = event["type"]
+        event_data = event["data"]
+        self.log(f"System event received: {event_type}", "DEBUG", context="handle_system_events")
+        if event_data == "system_metrics request":
+            try:
+                handling_core = self.get_core_by_role("system_monitoring")
+                if handling_core:
+                    result = await self.handle_event_through_core(handling_core, event)
+                    self.log(f"System metrics event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                    return result
+            except Exception as e:
+                self.log(f"Error routing system event through core: {e} | handling directly", "ERROR", context="handle_system_events")
+                self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_system_events")
+                return False
+
+    async def handle_system_idle(self, event, core_particle = None):
+        """Handle system idle events for maintenance"""
+        self.log("System idle - performing maintenance", "DEBUG", context="handle_system_idle")
+        
+        # Could trigger particle pruning, memory consolidation, etc.
+        memory = self.memory
+        if memory and hasattr(memory, 'perform_maintenance'):
+            await memory.perform_maintenance()
+        # TODO 
+        return True
+
+    async def handle_shutdown(self, event, core_particle = None):
+        """Handle shutdown events"""
+        reason = event["data"].get("reason", "unknown")
+        self.log(f"Shutdown event received: {reason}", "SYSTEM", context="handle_shutdown")
+
+        # Trigger graceful shutdown through API registry
+        api.handle_shutdown()
+        
+        # Stop event loop
+        self.running = False
+        if self.event_loop_task:
+            self.event_loop_task.cancel()
+        
+        return True
+
+    async def handle_reflection(self, event, core_particle = None):
+        """Handle reflection events"""
+        reflection_type = event["type"]
+        reflection_data = event["data"]
+        self.log(f"Reflection triggered: {reflection_type}", "DEBUG", context="handle_reflection")
+        try:
+            handling_core = self.get_core_by_role("reflective_thoughts")
+            if handling_core:
+                result = await self.handle_event_through_core(handling_core, event)
+                self.log(f"Reflection event handled by core: {handling_core.id}", "DEBUG", context="emit_event")
+                return result
+        except Exception as e:
+            self.log(f"Error routing reflection through core: {e} | handling directly", "ERROR", context="handle_reflection")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_reflection")
+            return False
+
+    async def handle_cognitive_event(self, event, core_particle = None):
+        """Handle general cognitive events"""
+        self.log(f"Cognitive event: {event['data']}", "DEBUG", context="handle_cognitive_event")
+        # TODO
+        return True
+    
+    async def handle_unknown_event(self, event, core_particle = None):
+        """Handle unknown event types"""
+        self.log(f"Unknown event type: {event['type']}", "WARNING", context="handle_unknown_event")
+        # TODO
+        return None
+    
+    def register_handler(self, event_type, handler):
+        """Register a custom event handler"""
+        self.event_handlers[event_type] = handler
+        self.log(f"Registered handler for event type: {event_type}", "DEBUG", context="register_handler")
+    
+    async def start_event_loop(self):
+        """Start the main event processing loop"""
+        self.running = True
+        self.log("Event handler started", "SYSTEM", context="start_event_loop")
+        
+        try:
+            while self.running:
+                event = await self.event_queue.get()
+                await self.handle_event(event)
+        except asyncio.CancelledError:
+            self.log("Event loop cancelled - shutting down gracefully", "SYSTEM", context="start_event_loop")
+        except Exception as e:
+            self.log(f"Event loop error: {e}", "ERROR", context="start_event_loop")
+        finally:
+            self.running = False
+    
+    async def start_idle_scheduler(self):
+        """Start the idle event scheduler"""
+        try:
+            while self.running:
+                await asyncio.sleep(30)  # Emit idle event every 30 seconds
+                if self.running:
+                    await self.emit_event("system_idle", {}, source="scheduler")
+        except asyncio.CancelledError:
+            self.log("Idle scheduler cancelled", "DEBUG", context="start_idle_scheduler")
+    
+    async def initialize(self):
+        """Initialize the event system with background tasks"""
+        self.initialized = False
+        # Start event loop
+        self.event_loop_task = asyncio.create_task(self.start_event_loop())
+        
+        # Start idle scheduler  
+        self.idle_task = asyncio.create_task(self.start_idle_scheduler())
+
+        self._agent_loop = asyncio.get_event_loop()
+
+        await asyncio.sleep(2.0)  # Give tasks a moment to start
+        self.start_time = datetime.datetime.now().timestamp()
+        self.initialized = True
+        self.log("Event handler initialized with background tasks", "SYSTEM", context="initialize")
+    
+    async def shutdown(self):
+        """Graceful shutdown of event system"""
+        self.running = False
+        
+        if self.event_loop_task:
+            self.event_loop_task.cancel()
+            try:
+                await self.event_loop_task
+            except asyncio.CancelledError:
+                pass
+        
+        if hasattr(self, 'idle_task'):
+            self.idle_task.cancel()
+            try:
+                await self.idle_task
+            except asyncio.CancelledError:
+                pass
+
+        self.log("Event handler shutdown complete", "SYSTEM", context="shutdown")
+
+class PriorityEventQueue:
+    """Priority queue for events using asyncio"""
+    
+    def __init__(self):
+        self._queue = []
+        self._event = asyncio.Event()
+        self._counter = 0  # For stable sorting
+    
+    async def put(self, event, priority=5):
+        """Add event to queue with priority (lower number = higher priority)"""
+        heapq.heappush(self._queue, (priority, self._counter, event))
+        self._counter += 1
+        self._event.set()
+    
+    async def get(self):
+        """Get next event from queue"""
+        while not self._queue:
+            self._event.clear()
+            await self._event.wait()
+        
+        # Reset event for next wait if queue is now empty
+        if len(self._queue) == 1:
+            self._event.clear()
+        
+        _, _, event = heapq.heappop(self._queue)
+        return event
+    
+    def empty(self):
+        """Check if queue is empty"""
+        return len(self._queue) == 0
+    
+    def pop(self, event):
+        """Remove specific event from queue"""
+        for i, (_, _, e) in enumerate(self._queue):
+            if e == event:
+                del self._queue[i]
+                heapq.heapify(self._queue)
+                return True
+        return False
+
+    
+    def qsize(self):
+        """Get queue size"""
+        return len(self._queue)

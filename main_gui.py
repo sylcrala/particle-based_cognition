@@ -13,6 +13,7 @@ from vispy.scene.visuals import Text, XYZAxis, Line, Markers
 from pathlib import Path
 import threading
 import colorsys
+from math import sin
 
 # import API registry and initialize APIs
 from apis.api_registry import api
@@ -72,7 +73,7 @@ class FieldVisualizer(scene.SceneCanvas):
         except Exception as e:
             log_to_console(f"Error initializing status text: {e}", level="ERROR", context="FieldVisualizer")
 
-        particle_types = ["memory", "lingual", "sensory"] # add others as needed for new particle types
+        particle_types = ["memory", "lingual", "sensory", "core"] # add others as needed for new particle types
         try:
             for p_type in particle_types:
                 self.particle_visuals[p_type] = Markers(parent=self.view.scene)
@@ -192,6 +193,22 @@ class FieldVisualizer(scene.SceneCanvas):
         except Exception as e:
             print(f"Visual update error: {e}")
         
+    def safe_color_bounds(self, color_values):
+        """Ensure color values are within [0,1] range, logs if out of bounds"""
+        original = color_values
+        try:
+            bounded = np.clip(color_values, 0.0, 1.0)
+
+            if not np.array_equal(original, bounded):
+                intensity = np.sum(np.maximum(original - 1.0, 0.0))
+                log_to_console(f"Color values out of bounds, adjusted | Original colors: {original}, Bounded colors: {bounded}, Intensity: {intensity}", level="WARNING", context="FieldVisualizer")
+        except Exception as e:
+            log_to_console(f"Error bounding color values: {e}", level="ERROR", context="FieldVisualizer")
+            import traceback
+            log_to_console(f"Full traceback:\n{traceback.format_exc()}", level="ERROR", context="FieldVisualizer")
+
+        return bounded
+
     def toggle_spatial_grid(self, visible):
         """Toggle visibility of the spatial indexing grid"""
         self.show_spatial_grid = visible
@@ -210,7 +227,7 @@ class FieldVisualizer(scene.SceneCanvas):
                 field_api = api.get_api("_agent_field")
                 if field_api and hasattr(field_api, "get_all_particles"):
                     self.particle_provider = field_api
-                    log_to_console("Visualizer connected to particle field", context="FieldVisualizer")
+                    log_to_console("Visualizer connected to particle field", context="update_visualization")
 
             if not self.particle_provider:
                 if self.agent_ready:
@@ -226,21 +243,25 @@ class FieldVisualizer(scene.SceneCanvas):
 
                 # disabling status text upon agent ready and particle detection
                 if particles and not self.agent_ready:
-                    log_to_console(f"Visualizer found {len(particles)} particles in field", context="FieldVisualizer")
+                    log_to_console(f"Visualizer found {len(particles)} particles in field", context="update_visualization")
                     self.agent_ready = True
                     self.status_text.visible = False
                     self.grid_lines.visible = self.show_spatial_grid
 
                 # Update spatial grid visualization if enabled
-                if self.show_spatial_grid and self.particle_provider:
+                if self.show_spatial_grid and particles:
                     try:
-                        # Get grid cell size from particle field (could be exposed via method)
-                        grid_size = 0.2  # Default value, adjust based on your _get_grid_key method
+                        positions = [p.render_particle()["position"] for p in particles]
+                        pos_array = np.array(positions)
+                        min_bounds = (np.min(pos_array, axis=0))
+                        max_bounds = (np.max(pos_array, axis=0))
                         
                         # Create grid lines
                         grid_points = []
-                        grid_extent = 1.0  # Visualize grid from -1 to 1 in each dimension
-                        
+                        grid_extent = max(np.max(np.abs([min_bounds, max_bounds])) + 1.0, 2.0) # extent based on particle spread
+                        grid_size = 0.5
+
+
                         # Create horizontal grid lines (in XZ plane)
                         for i in np.arange(-grid_extent, grid_extent + grid_size, grid_size):
                             grid_points.extend([[-grid_extent, i, -grid_extent], [grid_extent, i, -grid_extent]])
@@ -266,7 +287,7 @@ class FieldVisualizer(scene.SceneCanvas):
                         else:
                             self.safe_update_visual(self.grid_lines, "lines", None)
                     except Exception as e:
-                        log_to_console(f"Error updating spatial grid: {e}", level="ERROR", context="FieldVisualizer")
+                        log_to_console(f"Error updating spatial grid: {e}", level="ERROR", context="update_visualization")
                         self.safe_update_visual(self.grid_lines, "lines", None)
 
                 # Group particles by type
@@ -361,30 +382,61 @@ class FieldVisualizer(scene.SceneCanvas):
                         
                         # Get color from hue and saturation
                         hue = render_info["color_hue"] / 360.0  # Normalize to [0,1]
-                        saturation = render_info["color_saturation"]
+                        raw_saturation = render_info["color_saturation"]
+                        
+                        if raw_saturation > 1.0:
+                            overflow_intensity = raw_saturation - 1.0
+                            #log_to_console(f"Saturation out of bounds: {raw_saturation} (overflow: {overflow_intensity})", level="WARNING", context="update_visualization")
+
+                            saturation = 0.85 + (0.15 * min(overflow_intensity, 1.0))
+                        else:
+                            saturation = raw_saturation
+
                         r, g, b = colorsys.hsv_to_rgb(hue, saturation, 1.0)
                         opacity = render_info["quantum_state"]["opacity"]
                         colors.append([r, g, b, opacity])
-                        
+
+                        glow_value = render_info.get("glow", 0.0)
+                        glow_intensity = render_info.get("glow_intensity", 0.0)
+                        glow_polarity = render_info.get("glow_polarity", 1)
+                        particle_frequency = render_info.get("pulse_rate", 1.0)
+
+                        shimmer_r, shimmer_g, shimmer_b = r, g, b
+                        shimmer_opacity = opacity * 0.7  # base shimmer opacity
+
                         # Check for shimmer effect
-                        if self.show_shimmer and render_info["quantum_state"]["animation"] == "shimmer":
-                            shimmer_positions.append(pos)
-                            shimmer_sizes.append(size * 1.2)  # Slightly larger
-                            
-                            # Make shimmer brighter and with pulsating opacity
-                            shimmer_r, shimmer_g, shimmer_b = r + 0.2, g + 0.2, b + 0.2
-                            shimmer_r = min(shimmer_r, 1.0)
-                            shimmer_g = min(shimmer_g, 1.0)
-                            shimmer_b = min(shimmer_b, 1.0)
-                            
-                            # Pulsating opacity based on time
-                            shimmer_opacity = opacity * (0.5 + 0.5 * math.sin(time.time() * 5))
-                            shimmer_colors.append([shimmer_r, shimmer_g, shimmer_b, shimmer_opacity])
-                        
+                        if self.show_shimmer and render_info["quantum_state"]["animation"] == "shimmer" and glow_intensity > 0.1:
+                            if glow_polarity > 0:
+                                shimmer_positions.append(pos)
+                                shimmer_sizes.append(size * (1.2 + glow_intensity * 0.3))  # grows with intensity
+                                glow_brightness = min(1.0 + glow_intensity * 0.4, 1.0)
+                                shimmer_r = min(r * glow_brightness, 1.0)
+                                shimmer_g = min(g * glow_brightness, 1.0)
+                                shimmer_b = min(b * glow_brightness, 1.0)
+                                pulse_frequency = particle_frequency + (glow_intensity * 0.5)
+                                shimmer_opacity = opacity * (0.7 + 0.3 * math.sin(time.time() * pulse_frequency))
+
+                                shimmer_colors.append([shimmer_r, shimmer_g, shimmer_b, shimmer_opacity])
+
+                            elif glow_polarity < 0:
+                                shimmer_positions.append(pos)
+                                shimmer_sizes.append(size * (1.4 + glow_intensity * 0.5))  # Larger shadow area
+                                shadow_strength = min(glow_intensity * 0.6, 0.8)
+                                shimmer_r = max(r * (1.0 - shadow_strength), 0.0)
+                                shimmer_g = max(g * (1.0 - shadow_strength), 0.0)
+                                shimmer_b = max(b * (1.0 - shadow_strength), 0.0)
+                                shimmer_b = min(shimmer_b + (shadow_strength * 0.2), 1.0)
+                                pulse_frequency = particle_frequency + (glow_intensity * 0.3)
+                                shimmer_opacity = opacity * (0.3 + 0.4 * math.sin(time.time() * pulse_frequency))
+
+                                shimmer_colors.append([shimmer_r, shimmer_g, shimmer_b, shimmer_opacity])
+
+
+
                         # Check for ghost trails
                         if self.show_trails and render_info["quantum_state"]["ghost_trails"]:
                             # Get trail positions from history
-                            particle_id = render_info.get("id") or "unknown"
+                            particle_id = render_info["id"]
                             if str(particle_id) in self.position_history:
                                 trail_positions = self.position_history[str(particle_id)]
                                 trail_opacities = np.linspace(0.1, opacity, len(trail_positions))
@@ -412,6 +464,8 @@ class FieldVisualizer(scene.SceneCanvas):
                     
                     # Update shimmer effects
                     if shimmer_positions and self.show_shimmer:
+                        shimmer_colors = np.clip(np.array(shimmer_colors), 0.0, 1.0).tolist() if shimmer_colors else [] #temporary clipping for test
+                        assert len(shimmer_positions) == len(shimmer_sizes) == len(shimmer_colors), "Shimmer arrays length mismatch"
                         self.shimmer_visuals[p_type].set_data(
                             pos=np.array(shimmer_positions),
                             size=np.array(shimmer_sizes),
@@ -445,7 +499,7 @@ class FieldVisualizer(scene.SceneCanvas):
                             color=trail_colors,
                         )
                     except Exception as e:
-                        log_to_console(f"Error updating ghost trails: {e}", level="ERROR", context="FieldVisualizer")
+                        log_to_console(f"Error updating ghost trails: {e}", level="ERROR", context="update_visualization")
                         # Use single transparent point on error
                         self.safe_update_visual(self.ghost_trail_visuals[p_type], "lines", None)
 
@@ -453,9 +507,9 @@ class FieldVisualizer(scene.SceneCanvas):
                 self.update()
 
             except Exception as e:
-                log_to_console(f"Error updating visualization: {e}", level="ERROR", context="FieldVisualizer")
+                log_to_console(f"Error updating visualization: {e}", level="ERROR", context="update_visualization")
                 import traceback
-                log_to_console(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="FieldVisualizer")
+                log_to_console(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="update_visualization")
 
                 # Reset all visuals to safe empty state
                 try:
@@ -472,9 +526,9 @@ class FieldVisualizer(scene.SceneCanvas):
                 self.status_text.visible = True
 
         except Exception as e:
-            log_to_console(f"Unexpected error in visualization update: {e}", level="ERROR", context="FieldVisualizer")
+            log_to_console(f"Unexpected error in visualization update: {e}", level="ERROR", context="update_visualization")
             import traceback
-            log_to_console(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="FieldVisualizer")
+            log_to_console(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="update_visualization")
 
             # Reset all visuals to safe empty state
             try:
@@ -719,18 +773,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if not message:
             return
         
-        agent = api.get_api("agent")
+        agent = api.get_api("_agent_anchor")
 
         self.chat_input.clear()
         self.update_chat_display(f"<b>You:</b> {message}")
         
         # Send event to agent event handler
         try:
-            response = agent.handle_agent_message(
+            response = agent.send_message(
                 message=message,
-                source="gui_user",
-                tags=["ui", "chat", "other", "message"],
-                timeout=240.0
+                source="gui_user"
             )
             self.update_chat_display(f"<b>Misty:</b> {response}")
         except Exception as e:
@@ -749,21 +801,24 @@ class MainWindow(QtWidgets.QMainWindow):
         legend_layout = QtWidgets.QGridLayout(legend_group)
         
         # Define colors for each particle type
-        type_colors = {
-            "Memory": (0, 255, 255),  # Cyan
-            "Lingual": (255, 128, 0),  # Orange
-            #"Core": (0, 0, 0),        # Black
-            "Sensory": (255, 0, 255),  # Magenta
-            #"Motor": (128, 128, 128)   # Gray
+        types = {
+            "Memory": 180,  # Cyan
+            "Lingual": 285,  # Magenta
+            "Sensory": 30,  # Orange
+            "Core": 120,  # Green
         }
         
         # Add color indicators and labels
         row = 0
-        for type_name, color in type_colors.items():
+        for type_name, hue in types.items():
+            # Convert hue to RGB
+            r, g, b = colorsys.hsv_to_rgb(hue / 360.0, 1.0, 1.0)
+            rgb_color = (int(r * 255), int(g * 255), int(b * 255))
+            
             # Create color indicator
             color_indicator = QtWidgets.QFrame()
             color_indicator.setFixedSize(16, 16)
-            color_indicator.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]}); border: 1px solid black;")
+            color_indicator.setStyleSheet(f"background-color: rgb({rgb_color[0]}, {rgb_color[1]}, {rgb_color[2]}); border: 1px solid black;")
             
             # Add to grid
             legend_layout.addWidget(color_indicator, row, 0)
@@ -849,13 +904,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def trigger_reflection(self):
         """Trigger a reflection cycle in the agent"""
         try:
-            agent = api.get_api("agent")
+            agent = api.get_api("_agent_anchor")
             if not agent:
                 self.add_to_log("Agent not initialized yet", "WARNING")
                 return
                 
             try:
-                agent.cognition_loop.reflect() ## TODO fix
+                agent.emit_event("reflection_triggered")
 
             except Exception as e:
                 self.add_to_log(f"Error triggering reflection: {str(e)}", "ERROR")

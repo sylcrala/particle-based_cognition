@@ -10,8 +10,10 @@ class Config():
         self.user_name = "Tony"
 
         self.AGENT_CONFIG = {
-            "name": "Misty"
-        }
+            "name": "Misty",
+            "mode": "llm-extension", # options: llm-extension (uses LLM for supplementing voice module, linguistic capabilities and knowledge base), cog-growth (no LLM for voice module - agent "grows" its own linguistic capabilities and knowledge base over time)
+            "memory_dir": f"./memory/{self.user_name}_{self.AGENT_CONFIG['mode']}",
+        } 
 
         self.LLM_CONFIG = {
             "model_path": "./models/core/",

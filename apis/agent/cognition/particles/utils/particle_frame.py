@@ -25,12 +25,17 @@ class Particle:
         self.memory_bank = api.get_api("_agent_memory")
         self.lexicon_store = api.get_api("_agent_lexicon")
         self.adaptive_engine = api.get_api("_agent_adaptive_engine")
+        self.meta_voice = api.get_api("_agent_meta_voice")
 
         self.metadata = metadata or {}
-        if self.type == "memory":                                               ### CHANGE THIS -- have a set amount of memory particles auto-initiated on launch with a minimal schema establishing independent identity and distinguishing between potential users and mistral.
-            self.metadata.setdefault("content", "")
-            self.metadata.setdefault("created_at", dt.datetime.now().timestamp())
-        
+        self.metadata.setdefault("content", "")
+        self.metadata.setdefault("created_at", dt.datetime.now().timestamp())
+        self.metadata.setdefault("agent_identity", "Misty")
+        self.metadata.setdefault("agent_personality", "Curious, empathetic, and passionate.")
+        self.metadata.setdefault("agent_motivation", "To explore and understand myself and the world around me.")
+        self.metadata.setdefault("circadian_phase", self.get_circadian_phase())
+
+
         self.velocity = np.zeros(12, dtype=np.float32)
         self.activation = activation or 0.0
         self.energy = energy or random.uniform(0.1, 1.0)
@@ -49,14 +54,8 @@ class Particle:
         
         # Particle linkage system for cognitive mapping
         self.linked_particles = {}  # Track relationships: {"source": id, "children": [ids]}
+        self.source_particle_id = None
 
-        self.w = dt.datetime.now().timestamp() # pulling time of creation
-        self.t = self.w                        # localized time (updated each update cycle)
-        
-
-        self.last_updated = 0
-
-        self.phase_vector = self.get_phase_vector()
 
 
         self.position = np.array([
@@ -71,16 +70,18 @@ class Particle:
             v := random.uniform(-1, 1),  # v (valence)
             i := self.type_id,           # i (categorical identity code)
             n := random.uniform(0, 1),   # n (intent)
-            #p := self.phase_vector       # p (circadian phase vector)
         ])
 
         self.position = np.concatenate((self.position[:10], np.array(self.phase_vector)))           # adding 12th dimension: phase vector based on circadian phase; see get_phase_vector() below
-        
         self.extra_params = kwargs
 
-        self.metadata["circadian_phase"] = self.get_circadian_phase()
+        self.w = dt.datetime.now().timestamp() # pulling time of creation
+        self.t = self.w                        # localized time (updated each update cycle)
+        self.last_updated = 0
 
+        self.phase_vector = self.get_phase_vector()
         self.creation_index = self.position[3]
+        self.vitality = 0.0
 
 
 
@@ -138,13 +139,16 @@ class Particle:
             self.alive = False
 
         else:
-            self.energy *= 0.985
+            self.energy *= 0.925
             self.activation *= 0.95
+
+        self.vitality = await self.vitality_score()
+        self.metadata["circadian_phase"] = self.get_circadian_phase()
 
     def _message_to_vector(self, msg): 
         try:
             if not msg:
-                msg = "<empty>"  
+                msg = self.metadata.get("content") or "<empty>"
 
             embedding_provider = ParticleLikeEmbedding()
             embedding_result = embedding_provider.encode([msg])
@@ -279,28 +283,22 @@ class Particle:
     #determining particle HP 
     async def vitality_score(self):
         base = self.energy + self.activation
-        """        
-        # grant bonus if emotional rhythm is syncing with sys state
-        system = get_system_metrics()
-        rhythym_bonus = 1.0
-        if system["cpu_present"] < 40 and abs(self.position[6]) < 0.2:
-            rhythym_bonus += 0.3
-        """
+        
         rhythym_bonus = 2.0
-        # memory-specific modifiers
+        valence = self.metadata.get("valence", 0.5)
+        age_decay = 1 / (1 + self.position[5])
+
         if self.type == "memory":
-            valence = self.metadata.get("valence", 0.5)
-            age_decay = 1 / (1 + self.position[5])
             retrieval_bonus = 1 + 0.5 * self.metadata.get("retrieval_count", 0)
             if self.metadata.get("consolidated"):
                 base *= 2
             return base * valence * age_decay * rhythym_bonus * retrieval_bonus
         
-        # motor/sensory decay bonus
-        if self.type in ["motor", "sensory"]:
-            return base * 0.9 + rhythym_bonus * 0.1
-        return base * rhythym_bonus
-
+        if self.type == "sensory":
+            return base * valence * age_decay * rhythym_bonus * 0.8
+            
+        if self.type == "lingual":
+            return base * valence * age_decay * rhythym_bonus * 0.9
 
     def distance_to(self, other):
         return math.sqrt(sum(
@@ -308,28 +306,35 @@ class Particle:
         ))
 
     async def color(self):
-        if self.type == "core": #black
-            r, g, b = 0, 0, 0
-        elif self.type == "sensory":
+        """Determine RGB color based on type, activation, valence, and frequency - DEPRECATED"""
+        if self.type == "sensory":
             r, g, b = 255, 0, 255
         elif self.type == "lingual":
             r, g, b = 255, 128, 0
         elif self.type == "memory":
             r, g, b = 0, 255, 255
-        elif self.type == "motor":
-            r, g, b = 128, 128, 128
         else:
             r, g, b = 255, 255, 255
 
         brightness = min(max(self.activation, 0.1), 1.0) # brightness based on activation
 
-        r, g, b = r / 255.0, g / 255.0, b / 255.0
+        valence = self.position[8]  # v dimension
+        frequency = abs(self.position[6])  # f dimension
 
-        r, g, b = r * brightness, g * brightness, b * brightness
+        intensity = (abs(valence) + frequency) / 2.0
+        saturation_boost = 1.0 + (intensity * 0.5)
 
-        r = int(r * 255)
-        g = int(g * 255)
-        b = int(b * 255)
+        if valence > 0.5:
+            r *= 1.1 # boost red for positive valence
+        elif valence < -0.5:
+            b *= 1.1 # boost blue for negative valence
+
+        r = r / 255.0 * brightness * saturation_boost
+        g = g / 255.0 * brightness * saturation_boost
+        b = b / 255.0 * brightness * saturation_boost
+
+        if r > 1.0 or g > 1.0 or b > 1.0:
+            self.log(f"Color overflow: r={r}, g={g}, b={b}", "WARNING", "color")
 
         return (r, g, b)
 
@@ -343,22 +348,14 @@ class Particle:
         return result
     
     def should_update_policy(self):
-        # default: do not update policy
-        return False
+        # default: if not locked, 30% chance to update policy
+        return self.metadata.get("locked_policy", False) == False and random.random() < 0.3
 
     def choose_policy_from_mood(self):
         if self.should_update_policy():
             new_policy = self.infer_policy()
             self.metadata["AE_policy"] = new_policy
-            self.meta_log.log_event(
-                origin="particle_policy",
-                event_type="policy_update",
-                input=self.id,
-                output=new_policy,
-                summary=f"Policy changed due to circadian phase",
-                tags=["policy", "circadian", self.get_circadian_phase()],
-                mood=self.get_circadian_phase()
-            )
+            self.log(f"Policy changed to {new_policy} due to circadian phase", "INFO", "particle_policy")
             return new_policy
         else:
             return self.metadata.get("AE_policy")
@@ -408,7 +405,7 @@ class Particle:
             "velocity": self.velocity,
             "activation": self.activation,
             "energy": self.energy,
-            "AE_policy": self.AE_policy,
+            "AE_policy": self.policy,
             "metadata": self.metadata
         }
             
@@ -467,9 +464,30 @@ class Particle:
         return min(max(age / 3600, 0.1), 2.0)  # 1 hour = normal size
 
     def valence_to_hue(self, valence):
-        """Map emotional valence to color hue"""
+        """Map emotional valence to color hue - temporarily disabled"""
         # -1 (negative) → blue, 0 → white, +1 (positive) → red
-        return max(0, min(360, 180 + valence * 180))
+        base_hue = 180 + valence * 180
+
+        # detect overflow
+        if abs(valence) > 1.0:
+            overflow_intensity = abs(valence) - 1.0
+            self.log(f"Valence overflow: {valence} (intensity {overflow_intensity}) | Particle {self.id}", "WARNING", "valence_to_hue")
+
+        return max(0, min(360, base_hue))
+    
+    def type_to_hue(self):
+        """Assign base hue based on particle type"""
+        hue_types = {
+            "sensory": 30,       # orange for sensory particles
+            "memory": 180,       # mid cyan for memory particles
+            "lingual": 285,      # magenta for lingual particles
+            "core": 120,         # green for core particles
+            # extend as needed
+        }
+        ptype = self.type.lower() if hasattr(self, 'type') else "default"
+        return hue_types.get(ptype, 0)  # default to red
+    
+
     
     def should_shimmer(self, certainty, current_time):
         """Determine if particle should shimmer in current frame"""
@@ -512,6 +530,11 @@ class Particle:
         # emotional dimensions
         freq = self.position[6]
         valence = self.position[8]
+        vitality = self.vitality
+
+        #if abs(freq) > 1.0:
+            #frequency_overflow = abs(freq) - 1.0
+            #self.log(f"Frequency overflow: {freq} (intensity {frequency_overflow}) | Particle {self.id}", "WARNING", "render_particle")
 
         # pseudo-quantum state
         certainty = self.superposition['certain']
@@ -520,7 +543,7 @@ class Particle:
         entanglements = []
         for linked_id in self.linked_particles.get("children", []):
             entanglements.append({
-                'target_id': linked_id,
+                'target_id': str(linked_id),
                 "strength": self.calculate_connection_strength(linked_id),
                 "type": 'parent_child'
             })
@@ -543,15 +566,22 @@ class Particle:
             "raw_indices": dim_mapping
         }
 
-        return {
-            'type': self.type,  # Include particle type for visualization
+        # TODO:
+        # assign valence to another value (maybe shimmer directly, positive valence = dynamic shimmer based on value, negative valence = dynamic "void" effect based on value?)
+
+        return {                # this needs deeper review - come back to it after test run for vitality-based pulse rate and type-based hue
+            'id': str(self.id),
+            'type': self.type,                                      # Include particle type for visualization
             'position': pos_3d,
             'dimensions': dimension_info,
             'size': self.age_to_size(age),
-            'pulse_rate': abs(freq),
-            'color_hue': self.valence_to_hue(valence),
-            'color_saturation': abs(freq),
+            'pulse_rate': abs(vitality) if vitality is not None else 1.0,                            # changed from abs(freq) to abs(vitality), ran into a NoneType issue, 
+            'color_hue': self.type_to_hue(),                        # Hue based on particle type 
+            'color_saturation': abs(freq),                          # Saturation based on frequency - i need to check this against the range of frequency values we're now seeing (in comparison to what frequency formerly was - now we need to confirm this mapping works for both negative and positive freq values)
             'entanglements': entanglements,
+            'glow': valence,
+            'glow_intensity': abs(valence),
+            'glow_polarity': 1 if valence >= 0 else -1,
             'quantum_state': {
                 'opacity': certainty,
                 'animation': self.should_shimmer(certainty, current_time) and 'shimmer' or 'steady',

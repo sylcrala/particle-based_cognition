@@ -20,6 +20,7 @@ from apis.agent.cognition.particles.utils.particle_frame import category_to_iden
 from apis.agent.cognition.particles.lingual_particle import LingualParticle
 from apis.agent.cognition.particles.memory_particle import MemoryParticle
 from apis.agent.cognition.particles.sensory_particle import SensoryParticle
+from apis.agent.cognition.particles.core_particles import CoreParticle
 
 
 MAX_PARTICLE_COUNT = 500
@@ -34,6 +35,7 @@ class ParticleField:
         self.event_handler = event_handler
         self.voice = voice
 
+        self.restoring_from_state = False
         self._update_active = True
 
         self.particles = []             # all particles in the field
@@ -56,9 +58,9 @@ class ParticleField:
         self.recent_actions = deque(maxlen=50)
         
         # Agent identity for seeding
-        config = api.get_api("config")
-        agent_config = config.get_agent_config()
-        self.name = agent_config.get("name")
+        self.config = api.get_api("config")
+        self.agent_config = self.config.get_agent_config()
+        self.name = self.agent_config.get("name")
 
         for p in self.particles:
             if self.adaptive_engine:
@@ -111,6 +113,22 @@ class ParticleField:
         avg = [sum(p.position[i] for p in self.particles) / len(self.particles) for i in range(12)]
         return avg
     
+    def remove_particle_with_id(self, particle_id):
+        """Remove a particle from the field by its ID"""
+        particle = self.get_particle_by_id(particle_id)
+        if particle:
+            particle.alive = False
+            self.alive_particles.discard(particle.id)
+            self.particles = [p for p in self.particles if p.id != particle_id]
+            self._remove_particle_from_grid(particle_id)
+            if self.adaptive_engine:
+                self.adaptive_engine.embeddings.pop(particle.id, None)
+                self.adaptive_engine.policies.pop(particle.id, None)
+            self.log(f"Removed particle {particle_id} from field", "INFO", "remove_particle_with_id")
+            return True
+        else:
+            self.log(f"Particle {particle_id} not found for removal", "WARNING", "remove_particle_with_id")
+            return False
 
     async def spawn_particle(self, id = None, type = None, metadata = None, energy=0.1, activation=0.1, AE_policy=None, emit_event = True, source_particle_id=None, **kwargs):
         """
@@ -119,9 +137,9 @@ class ParticleField:
 
         try:
             # Check particle limit first
-            if len(self.particles) >= MAX_PARTICLE_COUNT:
+            if len(self.particles) >= MAX_PARTICLE_COUNT and not self.restoring_from_state:
                 self.log(f"Particle spawn triggered at limit - triggering particle pruning before continuing", level="DEBUG", context="spawn_particle()")
-                self.prune_low_value_particles()
+                await self.prune_low_value_particles()
             
             # Import particle types dynamically to avoid circular imports
             if type == "memory":
@@ -139,6 +157,12 @@ class ParticleField:
                     id=id, metadata=metadata, energy=energy,
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
+            elif type == "core":
+                particle = CoreParticle(
+                    id=id, metadata=metadata, energy=energy,
+                    activation=activation, AE_policy=AE_policy, **kwargs
+                )
+                particle.source_particle_id = source_particle_id
             else:
                 particle = Particle(
                     id=id, type=type, metadata=metadata, energy=energy,
@@ -243,32 +267,31 @@ class ParticleField:
             self.log("[Seed] No particles detected at init — seeding with core particles.")
             for i in range(random.randint(5, 20)):
                 await self.spawn_particle(
-                    id=f"seed-{i}",
+                    id=None,
                     type="memory",
                     metadata={
                         "identity": {
                             "name": f"{self.name}",
-                            "context": f"I am {self.name}, a synthetic cognitive entity."
+                            "context": f"I am {self.name}, a growing cognitive entity."
                         },
-                        "tags": ["core", "identity", "anchor"]
+                        "tags": ["core", "identity", "anchor", f"seed-{i}"]
                     },
                     energy=0.9,
                     activation=0.7,
                     AE_policy="emergent"
                 )
-            self.log(f"Detected 0 particles, proceeding to spawn core particles for identity anchoring.")
+            self.log(f"Seeded core particles for identity anchoring.")
             
 
 
     async def prune_low_value_particles(self):
         self.log(f"Beginning pruning at {time()} with {len(self.particles)} particles present.")
 
-
-        alive_particles = [p for p in self.particles if p.alive]
+        alive_particles = [p for p in self.particles if p.alive and p.type != "core"]
         scored_particles = []
         for p in alive_particles:
             if hasattr(p, "vitality_score"):
-                score = p.vitality_score()
+                score = await p.vitality_score()
             
             else:  
                 # Base scoring — combine energy and activation
@@ -337,18 +360,15 @@ class ParticleField:
                 latest_sensory = max(sensory_particles, key=lambda p: p.environmental_state.get("timestamp", 0))
                 metrics = latest_sensory.environmental_state.get("current_state", {})
 
-            if not metrics:
-                system_metrics_api = api.get_api("system_metrics")
-                if system_metrics_api:
-                    metrics = system_metrics_api.get_current_metrics()
+            self.event_handler.emit_event("system_events", "system_metrics request", source="_calculate_adaptive_pruning_rate")
 
             if not metrics:
                 self.log("No system metrics available for adaptive pruning rate calculation", "WARNING", "_calculate_adaptive_pruning_rate")
                 return 0.05  # default pruning rate
 
-            cpu_usage = metrics.get("cpu_usage", 0) / 100.0 # convert to 0-1 scale
-            mem_percent = metrics.get("memory_usage", 0) / 100.0 # convert to 0-1 scale
-            particle_count = len(self.particles)
+            cpu_usage = metrics["cpu_usage"] / 100.0 # convert to 0-1 scale
+            mem_percent = metrics["memory_percent"] 
+            particle_count = len(self.alive_particles)
 
             if cpu_usage > 0.6 and particle_count >= 1000:
                 prune_rate = 0.30 # aggressive pruning, 30%
@@ -379,6 +399,8 @@ class ParticleField:
 
         except Exception as e:
             self.log(f"Error calculating adaptive pruning rate: {e}", "ERROR", "_calculate_adaptive_pruning_rate")
+            import traceback
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", "_calculate_adaptive_pruning_rate")
             return 0.05  # default pruning rate
 
     def get_particle_by_id(self, particle_id):
@@ -423,7 +445,7 @@ class ParticleField:
                     # Calculate collapse probability based on context and distance
                     distance = trigger_particle.distance_to(particle)
                     base_probability = max(0.1, 1.0 - (distance / cascade_radius))
-                    particle.activation += 0.01  # Slight activation boost
+                    particle.activation += 0.05  # Slight activation boost
 
                     # Context-specific modifiers
                     context_modifier = {
@@ -437,7 +459,7 @@ class ParticleField:
                     
                     if random.random() < collapse_probability:
                         collapsed_state = particle.observe(context=f"{context_type}_cascade")
-                        particle.energy -= 0.025 # energy cost for collapse
+                        particle.energy -= 0.015 # energy cost for collapse
                         collapse_log.append((particle.id, collapsed_state))
                         
                         # Create linkage between trigger and collapsed particle
@@ -542,17 +564,8 @@ class ParticleField:
                 stats["by_type"][p.type] = stats["by_type"].get(p.type, 0) + 1
                 
         return stats
-    
-    def inject_action_sync(self, action, source=None, tags=None, context_id = None):
-        """Synchronous wrapper for inject_action to be used in non-async contexts"""
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If the loop is already running, create a new task
-            return asyncio.create_task(self.inject_action(action, source, tags, context_id))
-        else:
-            return loop.run_until_complete(self.inject_action(action, source, tags, context_id))
 
-    async def inject_action(self, action, source=None, tags=None, context_id = None):
+    async def inject_action(self, action, source=None, tags=None, context_id = None, source_particle_id = None):
         """
         Inject user action into the particle field by creating appropriate particles
         """
@@ -564,32 +577,60 @@ class ParticleField:
 
         # Handle different action types
         if isinstance(action, str):
-            
-            particle = await self.spawn_particle(
-                id=None,
-                type="lingual",
-                metadata={
-                    "token": action,
-                    "source": source,
-                    "interaction_type": "user_input" if source == "user_input" else source,
-                    "tags": tags or []
-                },
-                energy=0.9,
-                activation=0.8,
-                AE_policy="cooperative"
-            )
-            
+            if source == "user_input-core":
+                tags.append("core_handled", "social_interaction")
+                particle = await self.spawn_particle(
+                    id=None,
+                    type="lingual",
+                    metadata={
+                        "token": action,
+                        "source": source,
+                        "interaction_type": "user_input" if source == "user_input" else source,
+                        "tags": tags or []
+                    },
+                    energy=0.9,
+                    activation=0.8,
+                    AE_policy="cooperative"
+                )
+                particle.source_particle_id = source_particle_id if source_particle_id else None
+            else:
+                particle = await self.spawn_particle(
+                    id=None,
+                    type="lingual",
+                    metadata={
+                        "token": action,
+                        "source": source,
+                        "interaction_type": "user_input" if source == "user_input" else source,
+                        "tags": tags or []
+                    },
+                    energy=0.9,
+                    activation=0.8,
+                    AE_policy="cooperative"
+                )
+                particle.source_particle_id = source_particle_id if source_particle_id else None
+                
             if particle:
                 self.log(f"Created lingual particle {particle.id} for action: {action[:50]}...")
 
                 # Set conscious attention to new particle location (especially for user inputs)
-                if source == "user_input":
+                if source == "user_input" or source == "user_input-core":
                     self.set_conscious_attention(particles=[particle])
+                    particle.metadata["needs_attention"] = True
                     self.log(f"Conscious attention set to user input particle at {particle.position}", "DEBUG", "inject_action")
+
+                # Contextual collapse around the new particle and core particle if provided
+                await self.trigger_contextual_collapse(particle, context_type="user_interaction", cascade_radius=0.7)
+                if source_particle_id:
+                    source_particle = self.get_particle_by_id(source_particle_id)
+                    if source_particle:
+                        await self.trigger_contextual_collapse(source_particle, context_type="user_interaction", cascade_radius=0.5)
+                    particles = [particle, source_particle]
+                else:
+                    particles = [particle]
 
                 # generate via meta voice
                 gen_source = "user_input" if source == "user_input" else source
-                response = await self.voice.generate(str(action), source=gen_source, context_particles=[particle], tags=tags or [], context_id=context_id if context_id else None)
+                response = await self.voice.generate(str(action), source=gen_source, context_particles=particles, tags=tags or [], context_id=context_id if context_id else None)
                 return response
 
             else:
@@ -611,9 +652,17 @@ class ParticleField:
                 energy=0.7,
                 activation=0.6
             )
+            particle.source_particle_id = source_particle_id if source_particle_id else None
             
             if particle:
                 self.log(f"Created action particle {particle.id} for structured action")
+                # Contextual collapse around the new particle
+                await self.trigger_contextual_collapse(particle, context_type="structured_action", cascade_radius=0.5)
+                if source_particle_id:
+                    source_particle = self.get_particle_by_id(source_particle_id)
+                    if source_particle:
+                        await self.trigger_contextual_collapse(source_particle, context_type="structured_action", cascade_radius=0.5)
+
                 return f"Structured action processed: {action_type}"
             else:
                 return None
@@ -651,6 +700,63 @@ class ParticleField:
         """Stop the continuous particle update loop"""
         self._update_active = False
 
+    def enforce_field_boundaries(self, particle):
+        """Keep particles within the spatial field bounds"""
+        # Define your field boundaries (adjust as needed)
+        field_bounds = {
+            'x': (-5.0, 5.0),
+            'y': (-5.0, 5.0), 
+            'z': (-5.0, 5.0)
+        }
+        
+        # Clamp positions to bounds
+        for i, (min_val, max_val) in enumerate(field_bounds.values()):
+            if i < len(particle.position):
+                if particle.position[i] < min_val:
+                    particle.position[i] = min_val
+                    particle.velocity[i] *= -0.5  # Bounce back with energy loss
+                elif particle.position[i] > max_val:
+                    particle.position[i] = max_val
+                    particle.velocity[i] *= -0.5
+
+    async def spawn_identity_cores(self):
+        """Spawns permanent core identity anchor particles if not already present"""
+        particles = []
+        for role in ["memory_coordination", "decision_making", "social_interaction", "system_monitoring", "reflective_thoughts", "identity_anchor"]:
+            existing_core = next((p for p in self.particles if p.type == "core" and p.metadata.get("role") == role and p.id in self.alive_particles), None)
+            if existing_core:
+                self.log(f"Core particle for role: {role} already exists with ID: {existing_core.id}", "INFO", "spawn_identity_cores")
+                continue  # Skip if core already exists
+            
+            core = await self.spawn_particle(
+                type="core",
+                metadata={"role": role, "persistence_lvl": "permanent"},  
+                energy=1.0,
+                activation=0.9,
+                emit_event=False
+            )
+            if core:
+                core.metadata["identity"] = {
+                    "name": f"{self.name}_core-{role}",
+                    "context": f"I am the {role} core of {self.name}, anchoring my identity and functions."
+                }
+                core._collapse_superposition()
+
+                particles.append(core)
+
+                anchor = api.get_api("_agent_anchor")
+                anchor.permanent_cores.append(core)
+                anchor.core_roles[role] = core
+                self.log(f"Spawned core particle for role: {role} with ID: {core.id}", "INFO", "spawn_identity_cores")
+            else:
+                self.log(f"Failed to spawn core particles for role: {role}", "ERROR", "spawn_identity_cores")
+
+        for p in particles:
+            particles_to_link = [other for other in particles if other != p]
+            await self.create_interaction_linkage(p.id, [other.id for other in particles_to_link], interaction_type="core_network")
+            
+    
+
     async def update_particles(self):
         """
         Main physics loop with energy-regulated interconnectivity
@@ -663,7 +769,9 @@ class ParticleField:
         self.log(f"Updating particles at {current_time.isoformat()} | Total Energy: {self.total_energy:.2f} | Alive Particles: {len(self.alive_particles)}", "DEBUG", "update_particles")
 
         # Seed core identity particles if none exist
-        await self.seed_particles()
+        if len(self.particles) == 0 and not self.restoring_from_state:
+            self.log("No alive particles detected - seeding core identity particles.", "WARNING", "update_particles")
+            await self.spawn_identity_cores()
         
         # Get only alive particles for processing
         alive_particles = [p for p in self.particles if p.id in self.alive_particles]
@@ -760,30 +868,51 @@ class ParticleField:
 
             # Apply forces and update particle
             particle.velocity = np.array(particle.velocity) + adaptive_force
+
+            # Resonance boost from nearby similar-frequency particles
+            nearby_particles = self.get_particles_in_radius(particle, radius=0.5)
+            freq_resonance = 0.0001 * len([p for p in nearby_particles if abs(p.position[6] - particle.position[6]) < 0.1])
+            particle.velocity += freq_resonance
             
             # Energy regeneration: particles slowly recover energy over time
-            base_regen = 0.00375  # Base regeneration rate
-            activation_bonus = particle.activation * 0.0005  # Higher activation = faster regen
-            particle.energy = min(1.0, particle.energy + base_regen + activation_bonus)
-            
-            # Activation decreases when energy is low (dependency link)
-            if particle.energy < 0.3:
-                particle.activation *= 0.975  # Faster decay at low energy
-            elif particle.energy < 0.7:
-                particle.activation *= 0.995  # Slower decay at moderate energy
-            elif particle.energy < 0.9:
-                particle.activation = min(1.0, particle.activation * 1.0005)  # Very slight boost 
-            elif particle.energy > 0.9:
-                particle.activation = min(1.0, particle.activation * 1.001)  # Slight boost at high energy
+            base_regen = 0.000375  # Base regeneration rate
+            activation_bonus = particle.activation * 0.00005  # Higher activation = faster regen
+            frequency_bonus = 0.00025 if particle.position[6] > 0.0 else 0.0  # Frequency dimension influence
+            valence_bonus = 0.00025 if particle.position[8] > 0.0 else 0.0  # Positive valence influence
+            particle.energy =  particle.energy + base_regen + activation_bonus + frequency_bonus + valence_bonus
+
+            # Activation increases when energy is high and valence is positive
+            if particle.position[8] > 0:
+                if particle.energy > 0.8:
+                    particle.activation = min(1.0, particle.activation * 1.002)  # Boost at high energy
+                elif particle.energy > 0.6:
+                    particle.activation = min(1.0, particle.activation * 1.0015)  # Moderate boost
+                elif particle.energy >= 0.5:
+                    particle.activation = min(1.0, particle.activation * 1.0005)  # Slight boost
+            else:
+                # Activation decreases when energy is low and valence is negative
+                if particle.energy < 0.3:
+                    particle.activation = max(0.0, particle.activation * 0.975)  # Faster decay at low energy
+                elif particle.energy < 0.5:
+                    particle.activation = max(0.0, particle.activation * 0.995)  # Moderate decay
+
+            # Activation cap 
+            if particle.activation > 0.95:
+                particle.activation *= 0.965  # Prevent runaway activation
+                particle.energy *= 0.98  # Slight energy cost for high activation
+    
+
+            # Enforce field boundaries
+            self.enforce_field_boundaries(particle)
 
             reproduction_chance = random.random() < particle.energy * particle.activation * 0.00075 # Low chance based on energy and activation
             if reproduction_chance and len(self.particles) < MAX_PARTICLE_COUNT:
                 # Spawn a child particle with slight variations
-                child_id = f"{particle.id}-child-{int(time())}-{random.randint(0,1000)}"
+                child_id = uuid.uuid4()
                 child_metadata = particle.metadata.copy()
                 child_metadata["origin"] = f"spawned from {particle.id}"
-                
-                await self.spawn_particle(
+
+                child = await self.spawn_particle(
                     id=child_id,
                     type=particle.type,
                     metadata=child_metadata,
@@ -792,9 +921,15 @@ class ParticleField:
                     AE_policy=particle.policy,
                     source_particle_id=particle.id
                 )
-                
+
+                child.linked_particles["source"] = particle.id
+                particle.linked_particles["children"] = child.id
+
                 # Energy cost for reproduction
                 particle.energy *= 0.7  # Lose some energy after spawning
+
+                particle._collapse_superposition()
+
                 self.log(f"Particle {particle.id} spawned child {child_id}", "INFO", "update_particles")
             
             # Update particle
@@ -1030,7 +1165,8 @@ class ParticleField:
                     field_state["particles_summary"].append(particle_summary)
             
             # Save to file
-            state_file = "./data/agent/field_shutdown_state.json"
+            base_path = self.agent_config.get("memory_dir")
+            state_file = f"{base_path}/field_shutdown_state.json"
             os.makedirs(os.path.dirname(state_file), exist_ok=True)
             
             with open(state_file, 'w') as f:
@@ -1086,7 +1222,8 @@ class ParticleField:
         """
         try:
             self.log(f"Restoring field from state: {field_state.get('timestamp')}", level="INFO", context="restore_from_state")
-            
+            self.restoring_from_state = True
+
             # Clear existing particles
             self.particles.clear()
             self.alive_particles.clear()
@@ -1126,6 +1263,7 @@ class ParticleField:
                             level="WARNING", context="restore_from_state")
             
             restored_count = len([p for p in self.particles if p.alive])
+            self.restoring_from_state = False
             self.log(f"Field restoration completed: {restored_count} particles restored", 
                     level="INFO", context="restore_from_state")
             

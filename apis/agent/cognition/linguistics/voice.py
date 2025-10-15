@@ -24,13 +24,73 @@ class MetaVoice:
         self.lexicon_store = lexicon
         self.model_handler = model_handler
 
+        self.config = api.get_api("config")
+        self.agent_config = self.config.get_agent_config() if self.config else {}
+
         self.chat_history = []
         self.thoughts = []
 
-    def log(self, message):
-        self.logger.log(message, "INFO", "MetaVoice", "MetaVoice")
+    def log(self, message, level = None, context = None):
+        context = context or "no_context"
+        level = level or "INFO"
+        self.logger.log(message, level, "MetaVoice", context)
 
     async def generate(self, prompt: str, source: str, max_tokens=1600, temperature=0.7, top_p=0.95, context_particles=None, context_id = None, tags = None) -> str:
+        """Voice generation router - routes to appropriate generation method based on agent mode set in config"""  
+        mode = self.agent_config["mode"] if self.agent_config and "mode" in self.agent_config else "Agent mode not configured"
+
+        if mode == "llm_extension":
+            return await self.generate_with_model(prompt, source, max_tokens, temperature, top_p, context_particles, context_id, tags)
+        elif mode == "cog_growth":
+            self.log("Cognitive growth mode selected - generation not implemented yet")
+            return "[Cognitive growth mode - generation not implemented]"
+        
+    async def generate_internal(self, prompt: str, source: str, max_tokens = 800, context_particles = None, context_id = None, tags = None) -> str:
+        """Generate response using internal thought process and linguistic capabilities - depends on agent growth and knowledge gained over time"""
+        # TODO: implement this fully - compare old speak.py voice generation from original ARIS project (see "REVIEW_FOR_INTEGRATION" dir) and salvage relevant parts for merge
+        input_source = str(source)
+        gentags = [tag for tag in (tags or []) if isinstance(tag, str)] + ["user_input" if source == "user_input" else "internal_thought"]
+
+        # Create input particle and trigger field-level quantum effects
+        if input_source == "user_input":
+            input_particle = await self.process_input(prompt, input_source)
+            
+            # Trigger contextual collapse for user interactions
+            if self.field and input_particle:
+                collapse_log = await self.field.trigger_contextual_collapse(
+                    input_particle, 
+                    "user_interaction",
+                    cascade_radius=0.7
+                )
+                self.log(f"User interaction triggered {len(collapse_log)} particle collapses")
+        else:
+            input_particle = await self.field.spawn_particle(
+                type="lingual",
+                metadata={
+                    "content": prompt,
+                    "source": input_source,
+                    "timestamp": time(),
+                    "processing_type": "internal"
+                },
+                energy=0.6,
+                activation=0.5,
+                emit_event=True
+            )
+
+        # Score context particles with quantum awareness
+        quantum_context = self.score_quantum_context_particles(prompt, context_particles or [])
+
+        try:
+            # implement internal generation logic here from old speak.py
+            return "Not fully implemented yet - in progress" 
+        except Exception as e:
+            self.log(f"Internal generation error: {e}")
+            self.log(f"Full traceback:\n{traceback.format_exc()}")
+            return "[Error: Internal generation failed]"
+
+        
+
+    async def generate_with_model(self, prompt: str, source: str, max_tokens=1600, temperature=0.7, top_p=0.95, context_particles=None, context_id = None, tags = None) -> str:
         """Generate response using model handler and quantum-aware particle context"""
 
         if not self.model_handler:
@@ -51,7 +111,6 @@ class MetaVoice:
                     "user_interaction",
                     cascade_radius=0.7
                 )
-                self.log(f"User interaction triggered {len(collapse_log)} particle collapses")
         else:
             input_particle = await self.field.spawn_particle(
                 type="lingual",
@@ -96,7 +155,7 @@ class MetaVoice:
             mem_entry = {
                 "input": prompt,
                 "response": response,
-                "context": self.sanitize_context_particles(quantum_context)  # ✅ Sanitize context particles
+                "context": self.sanitize_context_particles(quantum_context) 
             }
             
             if source == "user_input":
@@ -116,8 +175,8 @@ class MetaVoice:
 
             return response
         except Exception as e:
-            self.log(f"Generation error: {e}")
-            return "[Error: Generation failed]"
+            self.log(f"Model generation error: {e}", level="ERROR", context="generate_with_model")
+            return "[Error: Model generation failed]"
         
     async def safe_get_particle_content(self, particle):
         """Safely extract content from particle for reflection"""
@@ -303,8 +362,8 @@ class MetaVoice:
             self.log(f"Error spawning input particle: {e}")
             return None
 
-    async def spawn_and_learn_token(self, tokens, source=None):
-        """Create and learn from token via particle field - FIXED"""
+    async def spawn_and_learn_token(self, tokens, source=None): # TODO: compare to old speak.py similar method
+        """Create and learn from token via particle field"""
         try:
             # Ensure overall msg (tokens) is a string
             if not isinstance(tokens, str):
@@ -397,7 +456,7 @@ class MetaVoice:
 
                 elif chance >= 0.4 and chance < 0.5:
                     # Generate reflection
-                    particle = await self.process_input("how i am.", source = "internal_reflection")
+                    particle = await self.process_input("what I'm experiencing", source="internal_reflection")
                     safe_content = await self.safe_get_particle_content(particle)
                     reflection_prompt = f"I'm thinking about {safe_content}"
                     self.log(f"Reflecting on particle {particle.id}: {safe_content}")
