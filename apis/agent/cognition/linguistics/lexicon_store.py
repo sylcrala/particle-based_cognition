@@ -291,7 +291,7 @@ class LexiconStore:
             # Load with extended timeout for large lexicons
             memories = await asyncio.wait_for(
                 self.memory.get_memories_by_type("lexicon", limit=5000),  # Increased limit
-                timeout=30.0  # Extended timeout
+                timeout=60.0  # Extended timeout
             )
             
             if memories:

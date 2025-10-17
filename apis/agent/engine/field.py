@@ -163,10 +163,11 @@ class ParticleField:
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
             else:
-                particle = Particle(
-                    id=id, type=type, metadata=metadata, energy=energy,
+                particle = SensoryParticle(
+                    id=id, type="sensory", metadata=metadata, energy=energy,
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
+                particle.process_environmental_input("unknown_spawn", "particle_type_unknown")
 
             
             # Track particle linkage for cognitive mapping - ADD VALIDATION HERE
@@ -351,11 +352,12 @@ class ParticleField:
             # get sys metrics from sensory particles or direct API
             
 
-            metrics = await self.event_handler.emit_event("system_events", "system_metrics request", source="_calculate_adaptive_pruning_rate")
-
-            if not metrics or metrics is None:
+            sensory_particle = await self.event_handler.emit_event("system_events", "system_metrics request", source="_calculate_adaptive_pruning_rate")
+            metrics = sensory_particle.environmental_state.get("current_state") if sensory_particle else None
+            if not metrics or metrics is None: 
                 self.log("No system metrics available for adaptive pruning rate calculation", "WARNING", "_calculate_adaptive_pruning_rate")
                 return 0.05  # default pruning rate
+            
             try:
                 cpu_usage = metrics["cpu_usage"] / 100.0 # convert to 0-1 scale
                 mem_percent = metrics["memory_percent"] 
@@ -572,7 +574,6 @@ class ParticleField:
         # Handle different action types
         if isinstance(action, str):
             particle = await self.spawn_particle(
-                id=None,
                 type="lingual",
                 metadata={
                     "token": action,
@@ -621,7 +622,6 @@ class ParticleField:
             action_type = action.get("type", "unknown")
 
             particle = await self.spawn_particle(
-                id=None,
                 type="memory",  # Could be different based on action_type
                 metadata={
                     "action_type": action_type,

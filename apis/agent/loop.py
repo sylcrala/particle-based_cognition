@@ -144,7 +144,7 @@ class CognitionLoop:
             
             # Set attention region
             if active_particles:
-                self.field.set_conscious_attention(particles=active_particles[:10])
+                self.field.set_conscious_attention(particles=[active_particles[:10]])
 
             # Process active particles (conscious attention)
             for particle in active_particles[:10]:  # Focus on top 10

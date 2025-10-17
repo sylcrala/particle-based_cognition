@@ -55,7 +55,7 @@ class Particle:
         
         # Particle linkage system for cognitive mapping
         self.linked_particles = {"source": None, "children": [], "ghost": []}  # Track relationships: {"source": id, "children": [ids]}
-        self.source_particle_id = None
+        self.source_particle_id:str = None
 
         self.w = dt.datetime.now().timestamp() # pulling time of creation
         self.t = self.w                        # localized time (updated each update cycle)
@@ -160,7 +160,7 @@ class Particle:
                 msg = self.metadata.get("content") or "<empty>"
 
             embedding_provider = ParticleLikeEmbedding()
-            embedding_result = embedding_provider.encode([msg])
+            embedding_result = embedding_provider.encode([str(msg)])
             
             if embedding_result and len(embedding_result) > 0:
                 embedding = embedding_result[0]
@@ -566,7 +566,7 @@ class Particle:
                 children = [child for child in children if isinstance(child, uuid.UUID)]
             self.linked_particles["children"].extend(children)
 
-        for linked_id in self.linked_particles.get("children", []):
+        for linked_id in self.linked_particles.get("children"):
             entanglements.append({
                 'target_id': str(linked_id),
                 "strength": self.calculate_connection_strength(linked_id),
@@ -649,7 +649,7 @@ class Particle:
             return min(max(value, -1), 1)
 
     async def create_linked_particle(self, particle_type, content, relationship_type="triggered"):
-        """Create a new particle linked to this lingual particle"""
+        """Create a new particle linked to this particle"""
 
         metadata = {
             "content": content,
@@ -667,7 +667,7 @@ class Particle:
             energy = 0.5
             activation = 0.4
             
-        return await self.field.spawn_particle(
+        particle = await self.field.spawn_particle(
             type=particle_type,
             metadata=metadata,
             energy=energy,
@@ -675,6 +675,8 @@ class Particle:
             source_particle_id=self.id,  # Creates genealogy linkage
             emit_event=False
         )
+        self.linked_particles["children"].append([particle.id])
+        return particle
     
     def calculate_connection_strength(self, linked_id):
         """Calculate a score representing the strength of connection to a linked particle"""

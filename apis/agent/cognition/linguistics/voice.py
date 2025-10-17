@@ -51,7 +51,7 @@ class MetaVoice:
         level = level or "INFO"
         self.logger.log(message, level, "MetaVoice", context)
 
-    async def generate(self, prompt: str, source: str, max_tokens=1600, temperature=0.7, top_p=0.95, context_particles=None, context_id = None, tags = None) -> str:
+    async def generate(self, prompt: str, source: str, max_tokens=1600, temperature=0.7, top_p=0.95, context_particles=None, context_id = None, tags = None, source_particle_id = None) -> str:
         """Voice generation router - routes to appropriate generation method based on agent mode set in config"""  
         mode = self.config.agent_mode
         self.log(f"DEBUG: Detected mode = '{mode}'", "DEBUG", context="generate")
@@ -59,16 +59,17 @@ class MetaVoice:
         if mode == "llm-extension":
             return await self.generate_with_model(prompt, source, max_tokens, temperature, top_p, context_particles, context_id, tags)
         elif mode == "cog-growth":
-            return await self.generate_internal(prompt, source, context_particles, tags)
+            return await self.generate_internal(prompt, source, context_particles, tags, source_particle_id)
         else:
             self.log(f"Unknown agent mode '{mode}' - unable to generate response", "WARNING", context="generate")
             return "Invalid agent mode - no response generated"
         
-    async def generate_internal(self, prompt: str, source: str, context_particles = None, tags = None) -> str:
+    async def generate_internal(self, prompt: str, source: str, context_particles = None, tags = None, source_particle_id = None) -> str:
         """Generate response using internal thought process and linguistic capabilities - depends on agent growth and knowledge gained over time - used exclusively for cog-growth mode"""
         # TODO: implement this fully - compare old speak.py voice generation from original ARIS project (see "REVIEW_FOR_INTEGRATION" dir) and salvage relevant parts for merge
         input_source = str(source)
-        gentags = [tag for tag in (tags or []) if isinstance(tag, str)] + ["user_input" if source == "user_input" else "internal_thought"]
+        if tags:
+            gentags = [tag for tag in (tags or []) if isinstance(tag, str)] + ["user_input" if source == "user_input" else "internal_thought"]
 
         # Get lexicon terms and build vocabulary
         lexicon_terms = self.lexicon_store.get_terms()
@@ -76,7 +77,7 @@ class MetaVoice:
 
         # Create input particle and trigger field-level quantum effects
         if input_source == "user_input":
-            input_particle = await self.process_input(prompt, input_source)
+            input_particle = await self.process_input(prompt, input_source, source_particle_id)
             
             # Trigger contextual collapse for user interactions
             if self.field and input_particle:
@@ -85,7 +86,9 @@ class MetaVoice:
                     "user_interaction",
                     cascade_radius=0.7
                 )
-                self.log(f"User interaction triggered {len(collapse_log)} particle collapses")
+                self.field.set_conscious_attention(particles=[input_particle])
+                input_particle.metadata["needs_attention"] = True
+                self.log(f"User interaction triggered {len(collapse_log)} particle collapses and refocused conscious attention")
         else:
             input_particle = await self.field.spawn_particle(
                 type="lingual",
@@ -97,6 +100,7 @@ class MetaVoice:
                 },
                 energy=0.6,
                 activation=0.5,
+                source_particle_id=source_particle_id if source_particle_id else None,
                 emit_event=False
             )
 
@@ -109,11 +113,6 @@ class MetaVoice:
             )
             self.log(f"Internal processing triggered {len(collapse_log)} particle collapses")
 
-        # Small chance for auto linguistic processing of input
-        if random.random() < 0.1:  # 10% chance
-            self.log(f"Auto linguistic processing triggered for input particle: {input_particle.id}")
-            await input_particle.learn_phrase(prompt)
-
         # Debug check
         if "children" not in input_particle.linked_particles:
             self.log(f"WARNING: children key missing from particle {input_particle.id}", "WARNING")
@@ -122,17 +121,11 @@ class MetaVoice:
         self.log(f"DEBUG: children type: {type(input_particle.linked_particles['children'])}", "DEBUG")
 
         # build full context list and generate seed base
-        if input_particle and context_particles is not None:
+        if context_particles is not None:
             if isinstance(context_particles, list):
                 full_context = [input_particle] + [p for p in context_particles]
                 # Score context particles with quantum awareness
                 quantum_context = self.score_quantum_context_particles(prompt, full_context or [])
-                try:
-                    input_particle.linked_particles["children"].extend(quantum_context)
-                except Exception as e:
-                    self.log(f"Error extending children: {e}", "ERROR")
-                    self.log(traceback.format_exc(), "ERROR")
-
                 seed_base = (
                 int(input_particle.activation * 1000) +
                 int(input_particle.energy * 1000) +
@@ -154,13 +147,6 @@ class MetaVoice:
             else:
                 full_context = [context_particles] + [input_particle]
                 # Score context particles with quantum awareness
-                quantum_context = self.score_quantum_context_particles(prompt, full_context or [])
-                try:
-                    input_particle.linked_particles["children"].extend(quantum_context)
-                except Exception as e:
-                    self.log(f"Error extending children: {e}", "ERROR")
-                    self.log(traceback.format_exc(), "ERROR")
-
                 seed_base = (
                     int(input_particle.activation * 1000) +
                     int(input_particle.energy * 1000) +
@@ -179,18 +165,6 @@ class MetaVoice:
                 # create random seed based off seed base
                 random.seed(seed_base)
             
-        else:
-            quantum_context = self.score_quantum_context_particles(prompt, [input_particle] if input_particle else [])
-
-            seed_base = (
-                int(input_particle.activation * 1000) +
-                int(input_particle.energy * 1000) +
-                int(input_particle.position[6] * 1000) +  # frequency
-                int(input_particle.position[7] * 1000) +  # memory phase
-                int(input_particle.position[8] * 1000) +  # valence
-                hash(str(input_particle.metadata)) % 1000 
-            )
-            random.seed(seed_base)
 
         # Semantic memory retrieval
         memories = []
@@ -240,45 +214,47 @@ class MetaVoice:
                         abs(input_particle.position[8]) * 0.2 +  # Valence influence  
                         abs(input_particle.position[10]) * 0.15 + # Intent influence
                         abs(avg_activation) * 0.1 +               # System activation influence
-                        abs(avg_frequency) * 0.05                 # System frequency influence
+                        abs(avg_frequency) * 0.05 +               # System frequency influence
+                        abs(avg_intent) * 0.05                    # System intent influence
                     )
                     
                     # Determine character sequence length (1-5 chars based on influences)
                     char_length = max(1, int(pos_influence * 4) + 1)
-                    char_length = min(char_length, 5)  # Cap at 5 characters
+                    char_length = min(char_length, 12)  # Cap at 12 characters
                     
                     # Generate character sequence
                     char_sequence = ""
                     for j in range(char_length):
                         # Use different position indices for variety
                         pos_index = (i + j) % len(input_particle.position)
-                        char_seed = int(abs(input_particle.position[pos_index]) * len(ENGLISH_ALPHABET["phonemes"]["consonants"])) % len(ENGLISH_ALPHABET["phonemes"]["consonants"])
+                        char_seed = int(abs(input_particle.position[pos_index]) * len(ENGLISH_ALPHABET["phonetic_groups"]["consonants"])) % len(ENGLISH_ALPHABET["phonetic_groups"]["consonants"])
                         
                         # Bias toward vowels or consonants based on valence and intent
                         if input_particle.position[8] > 0.6 and random.random() < 0.4:  # High valence -> more vowels
-                            char_choice = random.choice(ENGLISH_ALPHABET["phonemes"]["vowels"])
+                            char_choice = random.choice(ENGLISH_ALPHABET["phonetic_groups"]["vowels"])
                         elif input_particle.position[10] > 0.7 and random.random() < 0.3:  # High intent -> consonants
-                            char_choice = ENGLISH_ALPHABET["phonemes"]["consonants"][char_seed]
+                            char_choice = ENGLISH_ALPHABET["phonetic_groups"]["consonants"][char_seed]
                         else:
                             # Default: use position-influenced character selection
-                            char_choice = ENGLISH_ALPHABET["phonemes"]["consonants"][char_seed]
+                            char_choice = ENGLISH_ALPHABET["phonetic_groups"]["consonants"][char_seed]
                         
                         char_sequence += char_choice
                     
                     expression_parts.append(char_sequence)
 
             phrase = " ".join(expression_parts)
+            output = str(phrase)
                 
             # Create response particle linked to input
             if input_particle and hasattr(input_particle, 'create_linked_particle'):
                 output_particle = await input_particle.create_linked_particle(
                     particle_type="lingual",
-                    content=phrase,
+                    content=output,
                     relationship_type="response_generation"
                 )
-                output_particle.learn_phrase(phrase, prompt)
-            
-            return phrase
+                output_particle.learn_phrase(output, prompt)
+            self.log(f"cog-growth generation: {output}", "DEBUG", context="generate_internal")
+            return output
         except Exception as e:
             self.log(f"Internal generation error: {e}")
             self.log(f"Full traceback:\n{traceback.format_exc()}")
@@ -377,7 +353,7 @@ class MetaVoice:
                 key=mem_key, 
                 value=mem_entry, 
                 links=[str(input_particle.id), str(response_particle.id)], 
-                source_particle_id=str(input_particle.id), 
+                source_particle_id=input_particle.id if input_particle else None, 
                 source="response generation", 
                 tags=gentags, 
                 memory_type="memories"
@@ -398,7 +374,7 @@ class MetaVoice:
             elif hasattr(particle, 'content'):
                 content = particle.content
             elif hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
-                content = particle.metadata.get('content', particle.metadata.get('token', ''))
+                content = particle.metadata.get('content') or particle.metadata.get('token') or particle.metadata.get('text')
             else:
                 content = str(particle)
             
@@ -536,7 +512,7 @@ class MetaVoice:
         scored_particles.sort(key=lambda x: x[0], reverse=True)
         return [particle for _, particle in scored_particles[:top_k]]
 
-    async def process_input(self, text, source=None):
+    async def process_input(self, text, source=None, source_particle_id = None):
         """Process input text and create lingual particles"""
         try:
 
@@ -550,7 +526,7 @@ class MetaVoice:
             self.log(f"Input processing error: {e}")
             return None
         
-    async def spawn_input_particle(self, text, source=None):
+    async def spawn_input_particle(self, text, source=None, source_particle_id = None):
         """Spawn a lingual particle for input text"""
         try:
             if self.field:
@@ -564,6 +540,7 @@ class MetaVoice:
                     },
                     energy=0.5,
                     activation=0.7,
+                    source_particle_id=source_particle_id if source_particle_id else None,
                     emit_event=False
                 )
                 return particle

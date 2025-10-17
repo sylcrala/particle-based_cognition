@@ -155,22 +155,24 @@ class CoreParticle(Particle):
             self._log_decision(f"DEBUG: processed user interaction: {user_message}", "DEBUG")
 
             # Spawn sensory particle linked to this core
-            sensory_particle = await self.field.spawn_particle(
-                type="sensory",
-                metadata={"content": f"User input: {user_message}", "modality": "text"},
-                source_particle_id=str(self.id),
-                emit_event=True
+            sensory_particle = await self.create_linked_particle(
+                particle_type="sensory",
+                content={"content": f"User input: {user_message}", "modality": "text"},
+                relationship_type="perceived"
             )
             
             # Add to managed particles
             self.managed_particles += [sensory_particle.id]
             
             # Process through field injection with core context
-            result = await self.field.inject_action(
-                user_message, 
-                source="user_input-core",
-                source_particle_id=str(self.id)
-            )
+            #result = await self.field.inject_action(
+            #    str(user_message), 
+            #    source="user_input-core",
+            #    source_particle_id=self.id,
+            #)
+
+            # generate via meta voice directly
+            result = await self.meta_voice.generate(prompt=user_message, source="user_input", source_particle_id=self.id)
 
             self._update_decision_history(event, result=result)
             self._log_decision(f"Processed user interaction: {user_message}", level="INFO")

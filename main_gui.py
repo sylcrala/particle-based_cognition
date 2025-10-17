@@ -23,8 +23,6 @@ from shared_services import system_metrics
 from apis.personal_tools.todo_list import todolist_api
 from apis.research.external_resources import ExternalResources
 
-# TODO: Implement PyQt6 GUI components here
-# TODO: Use vispy for 3D field visualizer
 # TODO: Refactor LLM usage as external component rather than core dependency (via external resources, similar to spaCy)
 # TODO: integrate more particle types
 # TODO: expand lexicon parsing
