@@ -21,6 +21,7 @@ class Particle:
         self.type = type
         self.type_id = category_to_identity_code(self.type)
 
+        self.config = api.get_api("config")
         self.field = api.get_api("_agent_field")
         self.memory_bank = api.get_api("_agent_memory")
         self.lexicon_store = api.get_api("_agent_lexicon")
@@ -53,10 +54,13 @@ class Particle:
         self.observation_context = None  # Track what caused collapse
         
         # Particle linkage system for cognitive mapping
-        self.linked_particles = {}  # Track relationships: {"source": id, "children": [ids]}
+        self.linked_particles = {"source": None, "children": [], "ghost": []}  # Track relationships: {"source": id, "children": [ids]}
         self.source_particle_id = None
 
-
+        self.w = dt.datetime.now().timestamp() # pulling time of creation
+        self.t = self.w                        # localized time (updated each update cycle)
+        self.last_updated = 0
+        self.phase_vector = self.get_phase_vector()
 
         self.position = np.array([
             x := random.uniform(0, 1),   # x (length)
@@ -74,14 +78,9 @@ class Particle:
 
         self.position = np.concatenate((self.position[:10], np.array(self.phase_vector)))           # adding 12th dimension: phase vector based on circadian phase; see get_phase_vector() below
         self.extra_params = kwargs
-
-        self.w = dt.datetime.now().timestamp() # pulling time of creation
-        self.t = self.w                        # localized time (updated each update cycle)
-        self.last_updated = 0
-
-        self.phase_vector = self.get_phase_vector()
         self.creation_index = self.position[3]
         self.vitality = 0.0
+        
 
 
 
@@ -129,11 +128,21 @@ class Particle:
         self.last_updated = now
 
         if self.type == "memory":
-            self.energy *= 0.995
-            self.activation *= 0.99
+            self.energy *= 0.925
+            self.activation *= 0.95
 
             if self.energy < 0.001:
                 self.alive = False
+
+        elif self.type == "core":
+            if self.persistence_lvl == "permanent":
+                self.alive = True
+                self.energy = 1.0
+                self.activation *= 0.99
+
+            elif self.persistence_lvl == "temporary":
+                self.energy *= 0.8
+                self.activation *= 0.95
 
         elif self.energy < 0.001:
             self.alive = False
@@ -299,6 +308,9 @@ class Particle:
             
         if self.type == "lingual":
             return base * valence * age_decay * rhythym_bonus * 0.9
+        
+        if self.type == "core":
+            return base * valence * age_decay * rhythym_bonus * 0.95
 
     def distance_to(self, other):
         return math.sqrt(sum(
@@ -349,20 +361,24 @@ class Particle:
     
     def should_update_policy(self):
         # default: if not locked, 30% chance to update policy
-        return self.metadata.get("locked_policy", False) == False and random.random() < 0.3
+        if not self.metadata.get("locked_policy", False) == False:
+            return random.random() < 0.3
+        else:
+            return False
 
     def choose_policy_from_mood(self):
         if self.should_update_policy():
             new_policy = self.infer_policy()
             self.metadata["AE_policy"] = new_policy
+            self.policy = new_policy
             self.log(f"Policy changed to {new_policy} due to circadian phase", "INFO", "particle_policy")
             return new_policy
         else:
-            return self.metadata.get("AE_policy")
+            return self.metadata.get("AE_policy") or self.policy
     
     def infer_policy(self):
         if self.metadata.get("locked_policy", False):
-            return self.metadata.get("AE_policy")
+            return self.policy
 
         circadian_phase = self.get_circadian_phase()
         circadian_bias = self.map_phase_to_policy(circadian_phase)
@@ -411,7 +427,8 @@ class Particle:
             
     @property
     def expression(self):
-        return self.metadata.get("expression") or self.metadata.get("token") or self.metadata.get("content") or self.token or self.id
+        expression = self.metadata.get("expression") or self.metadata.get("token") or self.metadata.get("content") or self.token or self.id
+        return expression
 
     # Quantum-inspired superposition methods
     def observe(self, context=None):
@@ -541,6 +558,14 @@ class Particle:
 
         # get particle entanglements
         entanglements = []
+        children = self.linked_particles.get("children") #TODO FIXME
+        if children is not None:
+            if isinstance(children, uuid.UUID):
+                children = [children]
+            if isinstance(children, list):
+                children = [child for child in children if isinstance(child, uuid.UUID)]
+            self.linked_particles["children"].extend(children)
+
         for linked_id in self.linked_particles.get("children", []):
             entanglements.append({
                 'target_id': str(linked_id),
@@ -648,7 +673,7 @@ class Particle:
             energy=energy,
             activation=activation,
             source_particle_id=self.id,  # Creates genealogy linkage
-            emit_event=True
+            emit_event=False
         )
     
     def calculate_connection_strength(self, linked_id):

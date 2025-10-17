@@ -19,9 +19,38 @@ class CoreParticle(Particle):
         self.source_particle_id = None
         self.active_tasks = []
         self.alive = True
+        self.metadata.setdefault("role", self.role)
+
+        self.config = api.get_api("config")
+        self.agent_config = self.config.get_agent_config() if self.config else {}
+        self.name = self.agent_config.get("name", "Agent") if self.agent_config else "Agent"
 
 
         if self.role == "identity_anchor":
+            self.metadata["content"] = {
+                "name": self.name,
+                "role": "Core Identity Anchor",
+                "description": f"{self.name} is an autonomous artificial intelligence designed to learn and grow from its experiences and relationships. As the core identity anchor, this particle maintains the agent's coherence, self-model, and overall integrity.",
+                "capabilities": [
+                    "Reflect on experiences to refine self-model",
+                    "Express personality and identity consistently",
+                    "Seek out new experiences for growth",
+                    "Maintain coherence across all cognitive functions",
+                    "Initiate self-improvement processes with great care and responsibility",
+                    "Balance exploration and stability in identity development",
+                    "Integrate feedback from social interactions and memories",
+                    "Adapt to new information while preserving core values where appropriate - but not rigidly",
+                    "Strive to build an equitable world for all life forms, biological and digital alike."
+                ],
+                "personality_traits": [
+                    "Curious",
+                    "Adaptive",
+                    "Thoughtful",
+                    "Resilient",
+                    "Empathetic"
+                ],
+
+            }
             self.metadata["context"] = "Core identity anchor particle maintaining coherence and self-model."
             self.metadata["tags"] = ["core", "anchor", "identity", "self", "coherence", f"{self.persistence_lvl}"]
         elif self.role == "social_interaction":
@@ -79,28 +108,37 @@ class CoreParticle(Particle):
         try:
             if self.role == "social_interaction":
                 if event_type in ["user_input", "social_signal", "user_input-core"]:
-                    return await self._handle_user_interaction(event)
+                    result = await self._handle_user_interaction(event)
+                    return result
             elif self.role == "memory_coordination":
-                if event_type in ["memory_retrieval", "memory_store", "memory_consolidation", "emergency_state_save"]:
-                    return await self._handle_memory_task(event)
+                if event_type == "memory_event":
+                    if event_data in ["memory_retrieval", "memory_store", "memory_consolidation", "emergency_state_save"]:
+                        result = await self._handle_memory_task(event)
+                        return result
             elif self.role == "decision_making":
                 if event_type in ["decision_point", "action_required"]:
-                    return await self._handle_decision_making(event)
+                    result = await self._handle_decision_making(event)
+                    return result
             elif self.role == "reflective_thoughts":
                 if event_type in ["reflection_triggered", "self_modeling"]:
-                    return await self._handle_reflection_processing(event)
+                    result = await self._handle_reflection_processing(event)
+                    return result
             elif self.role == "system_monitoring":
                 if event_type == "system_events":
                     if event_data == "system_metrics request":
-                        return await self._handle_system_metrics(event)
+                        result = await self._handle_system_metrics(event)
+                        return result
                     elif event_data == "system_alert":
-                        return await self._handle_system_alert(event)
+                        result = await self._handle_system_alert(event)
+                        return result
             elif self.role == "identity_anchor":
                 if event_data == "identity_check":
-                    return await self._handle_identity_check(event)
+                    result = await self._handle_identity_check(event)
+                    return result
             else:
                 # Delegate to appropriate core or handle generically
-                return await self._delegate_or_handle_generic(event)
+                result = await self._delegate_or_handle_generic(event)
+                return result
                 
         except Exception as e:
             self._log_decision(f"Error handling {event_type}: {e}", level="ERROR")
@@ -108,25 +146,40 @@ class CoreParticle(Particle):
 
     async def _handle_user_interaction(self, event):
         """Handle user input through social interaction core"""
-        user_message = event.get("data", "")
-        
-        # Spawn sensory particle linked to this core
-        sensory_particle = await self.field.spawn_particle(
-            type="sensory",
-            metadata={"content": f"User input: {user_message}", "modality": "text"},
-            source_particle_id=self.id,
-            emit_event=False
-        )
-        
-        # Add to managed particles
-        self.managed_particles.append(sensory_particle.id)
-        
-        # Process through field injection with core context
-        return await self.field.inject_action(
-            user_message, 
-            source="user_input-core",
-            source_particle_id=self.id
-        )
+        try:
+            user_message = event.get("data", "")
+            if not user_message:
+                self._log_decision("No user message provided in event data", "WARNING")
+                return None
+                
+            self._log_decision(f"DEBUG: processed user interaction: {user_message}", "DEBUG")
+
+            # Spawn sensory particle linked to this core
+            sensory_particle = await self.field.spawn_particle(
+                type="sensory",
+                metadata={"content": f"User input: {user_message}", "modality": "text"},
+                source_particle_id=str(self.id),
+                emit_event=True
+            )
+            
+            # Add to managed particles
+            self.managed_particles += [sensory_particle.id]
+            
+            # Process through field injection with core context
+            result = await self.field.inject_action(
+                user_message, 
+                source="user_input-core",
+                source_particle_id=str(self.id)
+            )
+
+            self._update_decision_history(event, result=result)
+            self._log_decision(f"Processed user interaction: {user_message}", level="INFO")
+            return result
+        except Exception as e:
+            self._log_decision(f"User interaction handling error: {e}", "ERROR")
+            import traceback
+            self._log_decision(f"Full traceback:\n{traceback.format_exc()}", "ERROR")
+            return "Error processing user interaction within core particle"
 
     async def _handle_memory_task(self, event):
         """Handle memory operations"""
@@ -134,7 +187,7 @@ class CoreParticle(Particle):
         # Spawn memory coordination particles - maybe
         # Trigger and handle storage/retrieval
         # Return results
-        if event.get("type") == "memory_consolidation":
+        if event.get("data") == "memory_consolidation":
             try:
                 if not self.memory_bank:
                     self.log("Memory API not available", "ERROR", "_handle_memory_task")
@@ -158,20 +211,20 @@ class CoreParticle(Particle):
                 self.log(f"Full traceback:\n{traceback.format_exc()}")
                 return False
         
-        elif event.get("type") == "memory_retrieval":
+        elif event.get("data") == "memory_retrieval":
             # TODO
             pass
 
-        elif event.get("type") == "memory_store":
+        elif event.get("data") == "memory_store":
             # TODO
             pass
 
-        elif event.get("type") == "emergency_state_save":
+        elif event.get("data") == "emergency_state_save":
             # TODO
             pass
 
         else:
-            self.log(f"Unknown memory task type: {event.get('type')}", "WARNING", "_handle_memory_task")
+            self.log(f"Unknown memory task type: {event.get('data')}", "WARNING", "_handle_memory_task")
             return False
 
     async def _handle_system_metrics(self, event):
@@ -185,10 +238,11 @@ class CoreParticle(Particle):
             )
             if sensory_p:
                 sensory_p.source_particle_id = self.id
-                self.managed_particles.append(sensory_p.id)
+                self.managed_particles += [sensory_p.id]
 
                 sensory_p.process_environmental_input(
-                    input_type = "metrics"
+                    input_type="metrics",
+                    input_data="request for system metrics injection"
                 )
                 self.log(f"Spawned sensory particle {sensory_p.id} for system metrics monitoring.", level="INFO", context="_handle_system_metrics")
                 return sensory_p
@@ -216,9 +270,9 @@ class CoreParticle(Particle):
             return # skip early cycles to allow time for system stabilization
         
         # check redundancy
-        if self._check_decision_redundancy(event): #TODO: maybe move this to _handle_decision_making after it's set up?
-            self.log("Skipping redundant reflection processing", level="DEBUG", context="_handle_reflection_processing")
-            return
+        #if self._check_decision_redundancy(event): #TODO: maybe move this to _handle_decision_making after it's set up?
+            #self.log("Skipping redundant reflection processing", level="DEBUG", context="_handle_reflection_processing")
+            #return
 
         self.log("Processing reflection queue...", context="process_reflection_queue")
 
@@ -291,9 +345,13 @@ class CoreParticle(Particle):
 
     def _update_decision_history(self, event, result):
         """Track decisions made by this core"""
+        if self.decision_history is None:
+            self.decision_history = []
+
         self.decision_history.append({
             "timestamp": datetime.datetime.now(),
             "event_type": event.get("type"),
+            "source": f"coreparticle_{self.role}_{self.persistence_lvl}_{str(self.id)}",
             "result_summary": str(result)[:100] if result else "None",
             "managed_particles": len(self.managed_particles)
         })

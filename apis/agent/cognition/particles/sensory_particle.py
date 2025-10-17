@@ -58,11 +58,11 @@ class SensoryParticle(Particle):
             if self.activation > 0.8:
                 self.activation = min(self.activation + 0.2, 1.0)
             
-            return True
+            return state
         
         except Exception as e:
             self.log(f"Error processing environmental input: {e}", "ERROR", "process_environmental_input", "SensoryParticle")
-            return False
+            return "issue processing system state"
         
             
             

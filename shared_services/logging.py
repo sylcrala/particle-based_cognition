@@ -7,13 +7,19 @@ import json
 from pathlib import Path
 
 from apis.api_registry import api
+config = api.get_api("config")
 
 class SystemLogger:
     def __init__(self):
         self.session_id = str(dt.now().timestamp()).replace('.', '_')
 
         self.logs = []
-        self.base_dir = Path("./logs")
+        self.mode = config.agent_mode
+        if self.mode == "llm-extension":
+            self.base_dir = Path("./logs/llm_extension")
+        elif self.mode == "cog-growth":
+            self.base_dir = Path("./logs/cog_growth")
+    
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
         self.logs_dir = self.base_dir / f"session_{self.session_id}"

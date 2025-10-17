@@ -2,6 +2,7 @@
 handles linguistic processing - processing inputs and internal thoughts and parses token(s) and phrases for definition 
 """
 import uuid
+import string
 from datetime import datetime
 import asyncio
 import json
@@ -19,6 +20,25 @@ class LexiconStore:
         self.memory = memory
         self.adaptive_engine = adaptive_engine
 
+    def custom_tokenizer(self, text):
+        """Custom tokenizer to split text into words and punctuation"""
+        tokens = []
+        word = ''
+        for char in text:
+            if char in string.whitespace:
+                if word:
+                    tokens.append(word)
+                    word = ''
+            elif char in string.punctuation:
+                if word:
+                    tokens.append(word)
+                    word = ''
+                tokens.append(char)
+            else:
+                word += char
+        if word:
+            tokens.append(word)
+        return tokens
 
     async def add_term(self, token, full_phrase=None, definitions=None, context=None,
                       source="unknown", intent=None, term_type=None, tags=None,
@@ -369,10 +389,10 @@ class LexiconStore:
             elif particle.type in ["memory", "cognitive"] and hasattr(particle, 'metadata'):
                 content = particle.metadata.get('content', '')
                 if content and isinstance(content, str):
-                    tokens = content.split()
+                    tokens = self.custom_tokenizer(content)
                     learned_count = 0
-                    
-                    for token in tokens[:5]:  # Process first 5 tokens
+
+                    for token in tokens:  # Process all tokens
                         if token and len(token) > 2:  # Skip short tokens
                             # Enhanced add_term call with consciousness data
                             result = await self.add_term(

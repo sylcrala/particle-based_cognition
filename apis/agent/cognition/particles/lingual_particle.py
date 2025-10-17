@@ -37,8 +37,10 @@ class LingualParticle(Particle):
         self.category = None                                                            # token's stored semantic class
         #self.enrichment_sources = self.lexicon_store.get_term_sources(self.token)      # overall list of sources used
 
-        self.tokenizer = api.get_api("_agent_model_handler").tokenizer
-
+        if self.config.agent_mode == "llm-extension":
+            self.tokenizer = api.get_api("_agent_model_handler").tokenizer
+        if self.config.agent_mode == "cog-growth":
+            self.tokenizer = self.lexicon_store.custom_tokenizer
 
     async def trigger_memory_formation(self, content, importance=0.5):
         """Trigger creation of a memory particle from this lingual particle"""
@@ -68,6 +70,11 @@ class LingualParticle(Particle):
     
 
     async def generate_expression_from_particle(self, tokens, context_particles=None, source = None):
+        """Generates an expression based on the particle's token and context - DEPRECATED"""
+        self.log(f"DEPRECATED: generate_expression_from_particle() is deprecated - please update and remove method call", source="LingualParticle", context="generate_expression_from_particle()", level="WARNING")
+
+        self.log(f"Generating expression from particle with tokens: {tokens} and context_particles: {context_particles}", source="LingualParticle", context="generate_expression_from_particle()")
+
         if source != "user_input" or EXTERNAL_SOURCE:
             self.log(f"triggering generation for internal particle: {self.particle.id}", source = "LingualParticle", context = "generate_expression_from_particle()")
             #return None
@@ -139,67 +146,132 @@ class LingualParticle(Particle):
         self.metadata["learning_locked"] = False
         return False
 
+    async def learn_phrase(self, phrase=None, context=None):
+        """Takes a full phrase, tokenizes it via custom tokenizer, and learns each token using learn()."""
+        if not phrase:
+            self.log(f"No phrase provided to learn from.", source="LingualParticle", context="learn_phrase()")
+            return
+        
+        tokens = self.lexicon_store.custom_tokenizer(phrase)
+        if not tokens:
+            self.log(f"No tokens extracted from phrase: {phrase}", source="LingualParticle", context="learn_phrase()")
+            return
+        
+        for token in tokens:
+            await self.learn(token, origin=phrase, context=context if context else None)
 
-    async def learn(self, token=None, context=None):
+
+    async def learn(self, token=None, context=None, origin=None):
         """
         Learns about the current token by defining, classifying, and storing it.
         Stores information in the lexicon and logs memory events.
         """
         token = str(token) or str(self.token)
+        if len(token.split()) > 1:
+            self.log(f"Multi-word token detected, manually splitting: {token}", source="LingualParticle", context="learn()")
+            token = self.lexicon_store.custom_tokenizer(token)
+        
         context = context or [self.expression] if self.expression else self.metadata.get("context", [])
         now = datetime.now().timestamp()
 
-        if not token or not isinstance(token, str) or token.strip() == "":
+        if not token:
             self.log(f"[Learn] Skipping invalid token: {token}", source="LingualParticle", context="learn()")
             return
         
-        if not await self.sync_data():
-            self.log(f"[Learn] Sync failed; skipping learning for token: {token}", source="LingualParticle", context="learn()")
-            return
+        if isinstance(token, list): # processes list of tokens for custom_tokenizer usage, otherwise processes normally (str)
+            for t in token:
+                if not await self.sync_data():
+                    self.log(f"[Learn] Sync failed; skipping learning for token: {t}", source="LingualParticle", context="learn()")
+                    return
+                
+                # Skip if already well-defined
+                if self.lexicon_store.has_deep_entry(token):
+                    self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
+                    return
 
-        #if not await self.initialize_context_profile(token, context):
-        #   self.log(f"[Learn] Initialization failed; skipping learning for token: {token}", source="LingualParticle", context="learn()")
-        #    return
+                # Classify and define
+                classified = self.ext_res.classify_term(token)
+                definition, sources = await self.define_term(token, phrase=context)
 
-        # Skip if already well-defined
-        if self.lexicon_store.has_deep_entry(token):
-            self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
-            return
+                stored = await self._store_in_memory(token, definition, classified, sources)
 
-        # Classify and define
-        classified = self.ext_res.classify_term(token)
-        definition, sources = await self.define_term(token, phrase=context)
+                if not stored:
+                    await self.lexicon_store.add_term(
+                        token,
+                        origin or None,
+                        definition or "No definition.",
+                        context,
+                        sources or "unknown",
+                        classified.get("type", "unknown"),
+                        classified.get("tags", []),
+                        classified.get("intent", "neutral"),
+                        str(self.id),
+                        self.embedding
+                    )
 
-        stored = await self._store_in_memory(token, definition, classified, sources)
 
-        if not stored:
-            await self.lexicon_store.add_term(
-                token,
-                context,
-                definition or "No definition.",
-                context,
-                sources or "unknown",
-                classified.get("type", "unknown"),
-                classified.get("tags", []),
-                classified.get("intent", "neutral"),
-                str(self.id),
-                self.embedding
+
+                source_str = ", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
+                await self.memory_bank.link_token(token, definition, source_str)
+
+                await self.memory_bank.update(
+                    key = f"learn-{token}-{int(now)}", 
+                    value = f"[Lexical Learn] Learned: '{token}' with classification {classified}",
+                    source = "lp_learn",
+                    source_particle_id=str(self.id),
+                    memory_type="memories",
+                )
+
+            self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
+                
+        else:
+            if not await self.sync_data():
+                self.log(f"[Learn] Sync failed; skipping learning for token: {token}", source="LingualParticle", context="learn()")
+                return
+
+            #if not await self.initialize_context_profile(token, context):
+            #   self.log(f"[Learn] Initialization failed; skipping learning for token: {token}", source="LingualParticle", context="learn()")
+            #    return
+
+            # Skip if already well-defined
+            if self.lexicon_store.has_deep_entry(token):
+                self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
+                return
+
+            # Classify and define
+            classified = self.ext_res.classify_term(token)
+            definition, sources = await self.define_term(token, phrase=context)
+
+            stored = await self._store_in_memory(token, definition, classified, sources)
+
+            if not stored:
+                await self.lexicon_store.add_term(
+                    token,
+                    context,
+                    definition or "No definition.",
+                    context,
+                    sources or "unknown",
+                    classified.get("type", "unknown"),
+                    classified.get("tags", []),
+                    classified.get("intent", "neutral"),
+                    str(self.id),
+                    self.embedding
+                )
+
+
+
+            source_str = ", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
+            await self.memory_bank.link_token(token, definition, source_str)
+
+            await self.memory_bank.update(
+                key = f"learn-{token}-{int(now)}", 
+                value = f"[Lexical Learn] Learned: '{token}' with classification {classified}",
+                source = "lp_learn",
+                source_particle_id=str(self.id),
+                memory_type="memories",
             )
 
-
-
-        source_str = ", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
-        await self.memory_bank.link_token(token, definition, source_str)
-
-        await self.memory_bank.update(
-            key = f"learn-{token}-{int(now)}", 
-            value = f"[Lexical Learn] Learned: '{token}' with classification {classified}",
-            source = "lp_learn",
-            source_particle_id=str(self.id),
-            memory_type="memories",
-        )
-
-        self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
+            self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
 
 
     async def learn_from_particle(self, particle=None):
@@ -222,8 +294,15 @@ class LingualParticle(Particle):
 
         text = str(text)
 
-        tokens = text.split()
-        
+        if len(text.split()) > 1:
+            self.log(f"Multi-word text detected, manually tokenizing: {text}", source="LingualParticle", context="learn_from_particle()")
+            tokens = self.lexicon_store.custom_tokenizer(text)
+        else:
+            tokens = [text]
+
+        if not tokens: # NULL CHECK
+            self.log(f"No tokens extracted from text: {text}", source="LingualParticle", context="learn_from_particle()")
+            return
 
         for token in tokens: 
             if token not in self.lexicon_store.lexicon or await self.lexicon_store.get_term_def(token) == Exception:
@@ -237,9 +316,9 @@ class LingualParticle(Particle):
                         definition,
                             context or "learn",
                             sources,
-                            classified["type"],
-                            classified["tags"],
-                            classified["intent"],
+                            classified.get("type", "unknown"),
+                            classified.get("tags", []),
+                            classified.get("intent", "neutral"),
                             str(self.id),
                             self.embedding
                         )
@@ -307,6 +386,7 @@ class LingualParticle(Particle):
                     "updated": time.time()
                 },
                 source_particle_id = str(self.id),
+                emit_event = False
             )
             return True
         except Exception as e:
@@ -340,7 +420,8 @@ class LingualParticle(Particle):
             activation=0.15,
             AE_policy="reflective",
             particle_source = source or EXTERNAL_SOURCE,
-            source_particle_id = str(self.id)
+            source_particle_id = str(self.id),
+            emit_event = False
         )
     
 

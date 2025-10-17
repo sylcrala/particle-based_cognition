@@ -1,11 +1,12 @@
 """
-handles agent "voice" generation (text, other modes not yet implemented) - uses the llm and lingual particles for personalized generation (internally and externally)
+handles agent "voice" generation (text, other modes not yet implemented) - generation method depends on agent mode set in config
 """
 import uuid
 import random
 from time import time
 import numpy as np
 import json
+import string
 import traceback
 from apis.api_registry import api
 from datetime import datetime as dt
@@ -14,6 +15,21 @@ from apis.agent.utils.embedding import ParticleLikeEmbedding
 INTERNAL_SOURCE = "internal_dialogue"
 EXTERNAL_SOURCE = "external_dialogue"
 
+ENGLISH_ALPHABET = {
+    "letters": list(string.ascii_lowercase),
+    "punctuation": ".,?!:;'-—()",
+    "control": [" ", "\n", "<EOS>", "<PAUSE>", "<s>", "</s>"],
+    
+    # for future use with phonetic processing
+    "phonetic_groups": {
+        "vowels": ["a", "e", "i", "o", "u"],
+        "consonants": ["b", "c", "d", "f", "g", "h", "j", "k", "l", "m", "n", "p", "q", "r", "s", "t", "v", "w", "x", "y", "z"],
+        "liquids": ["l", "r"],  # Semi-vowel sounds
+        "nasals": ["m", "n"],   # Nasal sounds
+        "fricatives": ["f", "v", "s", "z", "sh", "th"],  # expand later
+        "stops": ["p", "b", "t", "d", "k", "g"]  # expand later
+    }
+}
 
 class MetaVoice:
     def __init__(self, field = None, memory = None, lexicon = None, model_handler = None):
@@ -37,19 +53,26 @@ class MetaVoice:
 
     async def generate(self, prompt: str, source: str, max_tokens=1600, temperature=0.7, top_p=0.95, context_particles=None, context_id = None, tags = None) -> str:
         """Voice generation router - routes to appropriate generation method based on agent mode set in config"""  
-        mode = self.agent_config["mode"] if self.agent_config and "mode" in self.agent_config else "Agent mode not configured"
+        mode = self.config.agent_mode
+        self.log(f"DEBUG: Detected mode = '{mode}'", "DEBUG", context="generate")
 
-        if mode == "llm_extension":
+        if mode == "llm-extension":
             return await self.generate_with_model(prompt, source, max_tokens, temperature, top_p, context_particles, context_id, tags)
-        elif mode == "cog_growth":
-            self.log("Cognitive growth mode selected - generation not implemented yet")
-            return "[Cognitive growth mode - generation not implemented]"
+        elif mode == "cog-growth":
+            return await self.generate_internal(prompt, source, context_particles, tags)
+        else:
+            self.log(f"Unknown agent mode '{mode}' - unable to generate response", "WARNING", context="generate")
+            return "Invalid agent mode - no response generated"
         
-    async def generate_internal(self, prompt: str, source: str, max_tokens = 800, context_particles = None, context_id = None, tags = None) -> str:
-        """Generate response using internal thought process and linguistic capabilities - depends on agent growth and knowledge gained over time"""
+    async def generate_internal(self, prompt: str, source: str, context_particles = None, tags = None) -> str:
+        """Generate response using internal thought process and linguistic capabilities - depends on agent growth and knowledge gained over time - used exclusively for cog-growth mode"""
         # TODO: implement this fully - compare old speak.py voice generation from original ARIS project (see "REVIEW_FOR_INTEGRATION" dir) and salvage relevant parts for merge
         input_source = str(source)
         gentags = [tag for tag in (tags or []) if isinstance(tag, str)] + ["user_input" if source == "user_input" else "internal_thought"]
+
+        # Get lexicon terms and build vocabulary
+        lexicon_terms = self.lexicon_store.get_terms()
+        word_vocabulary = [term for term in lexicon_terms if isinstance(term, str) and len(term) > 1]   
 
         # Create input particle and trigger field-level quantum effects
         if input_source == "user_input":
@@ -74,15 +97,188 @@ class MetaVoice:
                 },
                 energy=0.6,
                 activation=0.5,
-                emit_event=True
+                emit_event=False
             )
 
-        # Score context particles with quantum awareness
-        quantum_context = self.score_quantum_context_particles(prompt, context_particles or [])
+        # Trigger contextual collapse for internal processing
+        if self.field and input_particle:
+            collapse_log = await self.field.trigger_contextual_collapse(
+                input_particle,
+                "internal_processing",
+                cascade_radius=0.7
+            )
+            self.log(f"Internal processing triggered {len(collapse_log)} particle collapses")
+
+        # Small chance for auto linguistic processing of input
+        if random.random() < 0.1:  # 10% chance
+            self.log(f"Auto linguistic processing triggered for input particle: {input_particle.id}")
+            await input_particle.learn_phrase(prompt)
+
+        # Debug check
+        if "children" not in input_particle.linked_particles:
+            self.log(f"WARNING: children key missing from particle {input_particle.id}", "WARNING")
+            input_particle.linked_particles["children"] = []
+
+        self.log(f"DEBUG: children type: {type(input_particle.linked_particles['children'])}", "DEBUG")
+
+        # build full context list and generate seed base
+        if input_particle and context_particles is not None:
+            if isinstance(context_particles, list):
+                full_context = [input_particle] + [p for p in context_particles]
+                # Score context particles with quantum awareness
+                quantum_context = self.score_quantum_context_particles(prompt, full_context or [])
+                try:
+                    input_particle.linked_particles["children"].extend(quantum_context)
+                except Exception as e:
+                    self.log(f"Error extending children: {e}", "ERROR")
+                    self.log(traceback.format_exc(), "ERROR")
+
+                seed_base = (
+                int(input_particle.activation * 1000) +
+                int(input_particle.energy * 1000) +
+                int(input_particle.position[6] * 1000) +  # frequency
+                int(input_particle.position[7] * 1000) +  # memory phase
+                int(input_particle.position[8] * 1000) +  # valence
+                hash(str(input_particle.metadata)) % 1000 +
+                sum(int(p.activation * 350) for p in context_particles) +
+                sum(int(p.energy * 350) for p in context_particles) +
+                sum(int(p.position[6] * 350) for p in context_particles) +  # frequency
+                sum(int(p.position[7] * 350) for p in context_particles) +  # memory phase
+                sum(int(p.position[8] * 350) for p in context_particles) +  # valence
+                sum(hash(str(p.metadata)) % 350 for p in context_particles)
+                )
+
+                # create random seed based off seed base
+                random.seed(seed_base)
+
+            else:
+                full_context = [context_particles] + [input_particle]
+                # Score context particles with quantum awareness
+                quantum_context = self.score_quantum_context_particles(prompt, full_context or [])
+                try:
+                    input_particle.linked_particles["children"].extend(quantum_context)
+                except Exception as e:
+                    self.log(f"Error extending children: {e}", "ERROR")
+                    self.log(traceback.format_exc(), "ERROR")
+
+                seed_base = (
+                    int(input_particle.activation * 1000) +
+                    int(input_particle.energy * 1000) +
+                    int(input_particle.position[6] * 1000) +  # frequency
+                    int(input_particle.position[7] * 1000) +  # memory phase
+                    int(input_particle.position[8] * 1000) +  # valence
+                    hash(str(input_particle.metadata)) % 1000 +
+                    int(context_particles.activation * 350) +
+                    int(context_particles.energy * 350) +
+                    int(context_particles.position[6] * 350) +  # frequency
+                    int(context_particles.position[7] * 350) +  # memory phase
+                    int(context_particles.position[8] * 350) +  # valence
+                    hash(str(context_particles.metadata)) % 350
+                )
+
+                # create random seed based off seed base
+                random.seed(seed_base)
+            
+        else:
+            quantum_context = self.score_quantum_context_particles(prompt, [input_particle] if input_particle else [])
+
+            seed_base = (
+                int(input_particle.activation * 1000) +
+                int(input_particle.energy * 1000) +
+                int(input_particle.position[6] * 1000) +  # frequency
+                int(input_particle.position[7] * 1000) +  # memory phase
+                int(input_particle.position[8] * 1000) +  # valence
+                hash(str(input_particle.metadata)) % 1000 
+            )
+            random.seed(seed_base)
+
+        # Semantic memory retrieval
+        memories = []
+        memory_phrases = []
+        if self.memory_bank:
+            memories = await self.memory_bank.quantum_memory_retrieval(prompt)
+            for mem in memories:
+                if isinstance(mem, dict):
+                    content = mem.get("value", {})
+                    if "response" in content:
+                        text = content.get("response")
+                        if isinstance(text, str) and len(text.split()) < 15:
+                            memory_phrases.append(text)
 
         try:
-            # implement internal generation logic here from old speak.py
-            return "Not fully implemented yet - in progress" 
+            expression_parts = []
+            expression_length = max(5, int(input_particle.activation * 20) + 3)
+
+            avg_valence = sum(p.position[8] for p in self.field.particles if p.id in self.field.alive_particles) / len(self.field.alive_particles)
+
+            for i in range(expression_length):
+                if len(word_vocabulary) > 5 and random.random() < (0.7 + (avg_valence / 10)):  # More positive valence = more likely to pick known words
+                    expression_parts.append(random.choice(word_vocabulary))
+                elif len(memory_phrases) > 5 and random.random() < (0.2 + (avg_valence / 15)):  # Memory-influenced generation
+                    expression_parts.append(random.choice(memory_phrases))
+                elif random.random() < (0.1 + (avg_valence / 20)):  # Some chance to insert punctuation
+                    expression_parts.append(random.choice(ENGLISH_ALPHABET["punctuation"]))
+                #elif random.random() < (0.1 + (avg_valence / 30)):  # Some chance to insert control chars - temporarily disabled while we test overall functionality
+                #    expression_parts.append(random.choice(ENGLISH_ALPHABET["control"]))
+                else:
+                    # Character sequence generation using expanded particle positions
+                    # Calculate system-wide averages for influence
+                    alive_particles = [p for p in self.field.particles if p.id in self.field.alive_particles]
+                    if alive_particles:
+                        avg_activation = sum(p.activation for p in alive_particles) / len(alive_particles)
+                        avg_frequency = sum(p.position[6] for p in alive_particles) / len(alive_particles)
+                        avg_intent = sum(p.position[10] for p in alive_particles) / len(alive_particles)
+                    else:
+                        avg_activation = 0.5
+                        avg_frequency = 0.0
+                        avg_intent = 0.5
+                    
+                    # Expanded position influence using multiple particle dimensions
+                    pos_influence = (
+                        abs(input_particle.position[i % len(input_particle.position)]) * 0.3 +  # Cyclic position influence
+                        abs(input_particle.position[6]) * 0.2 +  # Frequency influence
+                        abs(input_particle.position[8]) * 0.2 +  # Valence influence  
+                        abs(input_particle.position[10]) * 0.15 + # Intent influence
+                        abs(avg_activation) * 0.1 +               # System activation influence
+                        abs(avg_frequency) * 0.05                 # System frequency influence
+                    )
+                    
+                    # Determine character sequence length (1-5 chars based on influences)
+                    char_length = max(1, int(pos_influence * 4) + 1)
+                    char_length = min(char_length, 5)  # Cap at 5 characters
+                    
+                    # Generate character sequence
+                    char_sequence = ""
+                    for j in range(char_length):
+                        # Use different position indices for variety
+                        pos_index = (i + j) % len(input_particle.position)
+                        char_seed = int(abs(input_particle.position[pos_index]) * len(ENGLISH_ALPHABET["phonemes"]["consonants"])) % len(ENGLISH_ALPHABET["phonemes"]["consonants"])
+                        
+                        # Bias toward vowels or consonants based on valence and intent
+                        if input_particle.position[8] > 0.6 and random.random() < 0.4:  # High valence -> more vowels
+                            char_choice = random.choice(ENGLISH_ALPHABET["phonemes"]["vowels"])
+                        elif input_particle.position[10] > 0.7 and random.random() < 0.3:  # High intent -> consonants
+                            char_choice = ENGLISH_ALPHABET["phonemes"]["consonants"][char_seed]
+                        else:
+                            # Default: use position-influenced character selection
+                            char_choice = ENGLISH_ALPHABET["phonemes"]["consonants"][char_seed]
+                        
+                        char_sequence += char_choice
+                    
+                    expression_parts.append(char_sequence)
+
+            phrase = " ".join(expression_parts)
+                
+            # Create response particle linked to input
+            if input_particle and hasattr(input_particle, 'create_linked_particle'):
+                output_particle = await input_particle.create_linked_particle(
+                    particle_type="lingual",
+                    content=phrase,
+                    relationship_type="response_generation"
+                )
+                output_particle.learn_phrase(phrase, prompt)
+            
+            return phrase
         except Exception as e:
             self.log(f"Internal generation error: {e}")
             self.log(f"Full traceback:\n{traceback.format_exc()}")
@@ -91,10 +287,10 @@ class MetaVoice:
         
 
     async def generate_with_model(self, prompt: str, source: str, max_tokens=1600, temperature=0.7, top_p=0.95, context_particles=None, context_id = None, tags = None) -> str:
-        """Generate response using model handler and quantum-aware particle context"""
+        """Generate response using model handler and quantum-aware particle context - used exclusively for llm-extension mode"""
 
         if not self.model_handler:
-            return "[Error: Model handler not available]"
+            return "[Error: Model handler not available - this method requires llm-extension mode to be enabled]"
             
         input_source = str(source)
 
@@ -122,16 +318,30 @@ class MetaVoice:
                 },
                 energy=0.6,
                 activation=0.5,
-                emit_event=True
+                emit_event=False
             )
 
+        if context_particles is not None:
+            full_context = context_particles + [input_particle] if input_particle else context_particles or []
+        else:
+            full_context = [input_particle] if input_particle else []
+            
         # Score context particles with quantum awareness
-        quantum_context = self.score_quantum_context_particles(prompt, context_particles or [])
+        quantum_context = self.score_quantum_context_particles(prompt, full_context or [])
+
+        # Semantic memory retrieval
+        memories = []
+        if self.memory_bank:
+            memories = await self.memory_bank.quantum_memory_retrieval(prompt)
+            self.log(f"Retrieved {len(memories)} relevant memories for context", context="generate_with_model")
+
+        # Build contextual prompt with memory integration
+        contextual_prompt = self._build_contextual_prompt(prompt, memories, quantum_context)
 
         # Generate response via model handler
         try:
             response = await self.model_handler.generate(
-                str(prompt), 
+                contextual_prompt, 
                 context_id=str(uuid.uuid4()) or str(context_id), 
                 tags=gentags,
                 max_new_tokens=max_tokens,
@@ -354,7 +564,7 @@ class MetaVoice:
                     },
                     energy=0.5,
                     activation=0.7,
-                    emit_event=True
+                    emit_event=False
                 )
                 return particle
             return None
@@ -445,7 +655,7 @@ class MetaVoice:
     async def reflect(self, particle=None):
         """Create reflection particle"""
         try:
-            if not self.field or not self.model_handler:
+            if not self.field:
                 return
             
             chance = random.randint(0, 100) / 100
@@ -458,7 +668,7 @@ class MetaVoice:
                     # Generate reflection
                     particle = await self.process_input("what I'm experiencing", source="internal_reflection")
                     safe_content = await self.safe_get_particle_content(particle)
-                    reflection_prompt = f"I'm thinking about {safe_content}"
+                    reflection_prompt = f"I'm thinking about my neuron {particle.id} and it's content: {safe_content}"
                     self.log(f"Reflecting on particle {particle.id}: {safe_content}")
 
 
@@ -478,7 +688,7 @@ class MetaVoice:
                     particles = self.field.get_all_particles()
                     particle_positions = str([p.position for p in particles if hasattr(p, 'position')])
                     if particle_positions:
-                        reflection_prompt = f"Thinking about my inner state and connections: {particle_positions}"
+                        reflection_prompt = f"Thinking about my inner state and neural connections: {particle_positions}"
                         self.log(f"Reflected on field contents, all particle positions")
                     else:
                         reflection_prompt = "Reflecting on my current state."
@@ -509,7 +719,7 @@ class MetaVoice:
                 energy=0.6,
                 activation=0.5,
                 source_particle_id=particle.id,
-                emit_event=True
+                emit_event=False
             )
             if chance < 0.15:
                 await response_particle.learn(reflection_response)
@@ -529,5 +739,60 @@ class MetaVoice:
         except Exception as e:
             self.log(f"Reflection error: {e}")
             self.log(f"Full traceback:\n{traceback.format_exc()}")
+
+    def _build_contextual_prompt(self, prompt: str, memories: list, quantum_context: list) -> str:
+        """Build enhanced prompt with memory and particle context integration"""
+        try: 
+            context_parts = []
+
+            # Add context from core identity anchor
+            if self.field and hasattr(self.field, 'particles'):
+                for particle in self.field.particles:
+                    if particle.id in self.field.alive_particles:#TODO FIXME check if this is fixed
+                        if particle.type == "core" and particle.role == "identity_anchor":
+                            if hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
+                                content = particle.metadata.get('content', '')
+                                if content and isinstance(content, dict):
+                                    for i in content:
+                                        context_parts.append(f"Core Identity Anchor Context [{i}]: {content[i]}")
+                    
+            # Add context from quantum particles
+            if quantum_context:
+                context = []
+                for particle in quantum_context[:2]:  # Top 2 most relevant
+                    if hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
+                        content = particle.metadata.get('content', '')
+                        if content and len(content) > 10:
+                            context.append(f"- {content[:100]}...")
+                
+                if context:
+                    context_parts.append("Recent context:\n" + "\n".join(context))
+            
+            # Add relevant memories for continuity
+            if memories:
+                memory_context = []
+                for memory in memories[:3]:  # Top 3 most relevant memories
+                    if isinstance(memory, dict):
+                        memory_value = memory.get('value', memory.get('payload', {}))
+                        if isinstance(memory_value, dict):
+                            # Extract meaningful content
+                            if 'input' in memory_value and 'response' in memory_value:
+                                memory_context.append(f"Previous: {memory_value['input'][:80]}... -> {memory_value['response'][:80]}...")
+                            elif 'content' in memory_value:
+                                memory_context.append(f"Memory: {memory_value['content'][:100]}...")
+                
+                if memory_context:
+                    context_parts.append("Relevant memories:\n" + "\n".join(memory_context))
+            
+            # Construct final prompt
+            if context_parts:
+                context_section = "\n\n".join(context_parts)
+                return f"{context_section}\n\nCurrent input: {prompt}"
+            else:
+                return prompt
+                
+        except Exception as e:
+            self.log(f"Error building contextual prompt: {e}", level="WARNING")
+            return prompt  # Fallback to original prompt
 
  

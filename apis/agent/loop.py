@@ -75,7 +75,7 @@ class CognitionLoop:
 
 
             # consolidate memories
-            await self.events.emit_event("memory_consolidation", "Request to consolidate recent memories", source="perform_maintenance_cycle")
+            await self.events.emit_event("memory_event", "memory_consolidation", source="perform_maintenance_cycle")
 
             # Prune low-value particles
             await self.field.prune_low_value_particles()

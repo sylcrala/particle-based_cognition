@@ -162,12 +162,12 @@ class ParticleField:
                     id=id, metadata=metadata, energy=energy,
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
-                particle.source_particle_id = source_particle_id
             else:
                 particle = Particle(
                     id=id, type=type, metadata=metadata, energy=energy,
                     activation=activation, AE_policy=AE_policy, **kwargs
                 )
+
             
             # Track particle linkage for cognitive mapping - ADD VALIDATION HERE
             if source_particle_id:
@@ -176,6 +176,7 @@ class ParticleField:
                 if source_particle and source_particle.alive and source_particle.id in self.alive_particles:
                     # Valid linkage - proceed with linking
                     particle.linked_particles = {"source": source_particle_id}
+                    particle.source_particle_id = str(source_particle_id)
                     
                     # Also update the source particle to know about this child
                     if not hasattr(source_particle, 'linked_particles'):
@@ -185,29 +186,25 @@ class ParticleField:
                     
                     # Prevent duplicate child entries
                     if particle.id not in source_particle.linked_particles['children']:
-                        source_particle.linked_particles['children'].append(particle.id)
-                    
-                    # Add the linked_to attribute for visualization
-                    particle.linked_to = source_particle_id
+                        source_particle.linked_particles['children'].extend([particle.id])
+
                     
                     self.log(f"Successfully linked particle {particle.id} to source {source_particle_id}", 
                             level="DEBUG", context="spawn_particle")
                 
-                if source_particle and source_particle.alive == False and source_particle.id not in self.alive_particles:
+                if source_particle and source_particle.alive == False and source_particle_id not in self.alive_particles:
                     # Link to a dead particle - spawn as a new particle with ghost traces (keep old particle links for full historical interconnectedness (this way, old dead particles are able to be *respawned* and referenced))
-                    particle.linked_particles = {"ghost": source_particle.id} # mark as ghost linkage
+                    particle.linked_particles = {"ghost": source_particle_id} # mark as ghost linkage
 
                     # Also update the source particle to know about this ghost child
                     if not hasattr(source_particle, 'linked_particles'):
                         source_particle.linked_particles = {}
-                    if 'ghost_children' not in source_particle.linked_particles:
-                        source_particle.linked_particles['ghost_children'] = []
+                    if 'ghost' not in source_particle.linked_particles:
+                        source_particle.linked_particles['ghost'] = []
                     
                     # Prevent duplicate ghost child entries
-                    if particle.id not in source_particle.linked_particles['ghost_children']:
-                        source_particle.linked_particles['ghost_children'].append(particle.id)
-
-                    particle.linked_to = None  # No direct live linkage
+                    if particle.id not in source_particle.linked_particles['ghost']:
+                        source_particle.linked_particles['ghost'].extend([particle.id])
 
                     self.log(f"Warning: Linked to dead particle {source_particle_id}, spawning as ghost trace",
                             level="WARNING", context="spawn_particle")
@@ -217,12 +214,10 @@ class ParticleField:
                     self.log(f"Warning: Cannot link to non-existent particle {source_particle_id}, spawning as orphan", 
                             level="WARNING", context="spawn_particle")
                     particle.linked_particles = {}
-                    particle.linked_to = None
                     source_particle_id = None  # Clear for logging
 
             else:
                 particle.linked_particles = {}
-                particle.linked_to = None
 
             # Add to field
             self.particles.append(particle)
@@ -298,9 +293,9 @@ class ParticleField:
                 base_score = p.energy + p.activation
 
                 # Valence boost (preserve emotionally charged memories)
-                valence = p.metadata.get("valence", 0.5)
+                valence = p.position[8]
                 if p.type == "memory":
-                    base_score *= (1 + valence * 1.5)
+                    base_score *= (valence * 1.45)
 
                 # Age penalty (unless consolidated)
                 age_penalty = 1.0
@@ -308,8 +303,9 @@ class ParticleField:
                     age_penalty = 1 / (1 + p.age)
 
                 # Consolidation flag
-                if p.metadata.get("consolidated", False):
-                    base_score *= 2  # protect long-term memory
+                if p.type == "memory":
+                    if p.metadata.get("consolidated", False) == True:
+                        base_score *= 2  # protect long-term memory
 
                 # Score = vitality * (age factor)
                 score = base_score * age_penalty
@@ -320,7 +316,7 @@ class ParticleField:
         # Sort by lowest score
         scored_particles.sort(key=lambda x: x[0])
 
-        prune_percentage = self._calculate_adaptive_pruning_rate()
+        prune_percentage = await self._calculate_adaptive_pruning_rate()
         total_particles = len(scored_particles)
 
         target_prune_count = int(total_particles * prune_percentage)
@@ -349,27 +345,24 @@ class ParticleField:
 
             self.log(f"Pruned low-score particle: {p.id}")
 
-    def _calculate_adaptive_pruning_rate(self) -> float:
+    async def _calculate_adaptive_pruning_rate(self) -> float:
         """Dynamically adjust pruning rate based on particle count"""
         try:
             # get sys metrics from sensory particles or direct API
-            metrics = None
+            
 
-            sensory_particles = self.get_particles_by_type("sensory")
-            if sensory_particles:
-                latest_sensory = max(sensory_particles, key=lambda p: p.environmental_state.get("timestamp", 0))
-                metrics = latest_sensory.environmental_state.get("current_state", {})
+            metrics = await self.event_handler.emit_event("system_events", "system_metrics request", source="_calculate_adaptive_pruning_rate")
 
-            self.event_handler.emit_event("system_events", "system_metrics request", source="_calculate_adaptive_pruning_rate")
-
-            if not metrics:
+            if not metrics or metrics is None:
                 self.log("No system metrics available for adaptive pruning rate calculation", "WARNING", "_calculate_adaptive_pruning_rate")
                 return 0.05  # default pruning rate
-
-            cpu_usage = metrics["cpu_usage"] / 100.0 # convert to 0-1 scale
-            mem_percent = metrics["memory_percent"] 
-            particle_count = len(self.alive_particles)
-
+            try:
+                cpu_usage = metrics["cpu_usage"] / 100.0 # convert to 0-1 scale
+                mem_percent = metrics["memory_percent"] 
+                particle_count = len(self.alive_particles)
+            except Exception as null_metrics:
+                self.log(f"Error extracting metrics values: {null_metrics}", "ERROR", "_calculate_adaptive_pruning_rate")
+                return 0.05  # default pruning rate
             if cpu_usage > 0.6 and particle_count >= 1000:
                 prune_rate = 0.30 # aggressive pruning, 30%
                 reason = f"HIGH_LOAD (CPU: {cpu_usage*100:.1f}%, Particles: {particle_count})"
@@ -434,6 +427,7 @@ class ParticleField:
     
     async def trigger_contextual_collapse(self, trigger_particle, context_type, cascade_radius=0.5):
         """Field-level collapse orchestration with cascading effects"""
+        # TODO: refine context-specific modifiers to work with the new agentanchor system and core particles
         try:
             # Find particles within influence radius
             related_particles = self.get_particles_in_radius(trigger_particle, cascade_radius)
@@ -533,7 +527,7 @@ class ParticleField:
                 for child_id in particle.linked_particles['children']:
                     child_lineage = trace_lineage(child_id, current_depth - 1, visited.copy())
                     if child_lineage:
-                        lineage["children"].append(child_lineage)
+                        lineage["children"].extend([child_lineage])
             
             # Trace source
             if hasattr(particle, 'linked_particles') and 'source' in particle.linked_particles:
@@ -565,7 +559,7 @@ class ParticleField:
                 
         return stats
 
-    async def inject_action(self, action, source=None, tags=None, context_id = None, source_particle_id = None):
+    async def inject_action(self, action, source=None, tags=None, context_id = None, source_particle_id = None, core_particle = None):
         """
         Inject user action into the particle field by creating appropriate particles
         """
@@ -577,38 +571,23 @@ class ParticleField:
 
         # Handle different action types
         if isinstance(action, str):
-            if source == "user_input-core":
-                tags.append("core_handled", "social_interaction")
-                particle = await self.spawn_particle(
-                    id=None,
-                    type="lingual",
-                    metadata={
-                        "token": action,
-                        "source": source,
-                        "interaction_type": "user_input" if source == "user_input" else source,
-                        "tags": tags or []
-                    },
-                    energy=0.9,
-                    activation=0.8,
-                    AE_policy="cooperative"
-                )
-                particle.source_particle_id = source_particle_id if source_particle_id else None
-            else:
-                particle = await self.spawn_particle(
-                    id=None,
-                    type="lingual",
-                    metadata={
-                        "token": action,
-                        "source": source,
-                        "interaction_type": "user_input" if source == "user_input" else source,
-                        "tags": tags or []
-                    },
-                    energy=0.9,
-                    activation=0.8,
-                    AE_policy="cooperative"
-                )
-                particle.source_particle_id = source_particle_id if source_particle_id else None
-                
+            particle = await self.spawn_particle(
+                id=None,
+                type="lingual",
+                metadata={
+                    "token": action,
+                    "source": source,
+                    "interaction_type": "user_input" if source == "user_input" else source,
+                    "tags": tags or []
+                },
+                energy=0.9,
+                activation=0.8,
+                AE_policy="cooperative"
+            )
+            particle.source_particle_id = source_particle_id if source_particle_id else None
+            if core_particle:
+                core_particle.managed_particles += [particle.id]
+
             if particle:
                 self.log(f"Created lingual particle {particle.id} for action: {action[:50]}...")
 
@@ -653,6 +632,8 @@ class ParticleField:
                 activation=0.6
             )
             particle.source_particle_id = source_particle_id if source_particle_id else None
+            if core_particle:
+                core_particle.managed_particles += [particle.id]
             
             if particle:
                 self.log(f"Created action particle {particle.id} for structured action")
@@ -722,7 +703,8 @@ class ParticleField:
     async def spawn_identity_cores(self):
         """Spawns permanent core identity anchor particles if not already present"""
         particles = []
-        for role in ["memory_coordination", "decision_making", "social_interaction", "system_monitoring", "reflective_thoughts", "identity_anchor"]:
+        anchor = api.get_api("_agent_anchor")
+        for role in anchor.core_roles:
             existing_core = next((p for p in self.particles if p.type == "core" and p.metadata.get("role") == role and p.id in self.alive_particles), None)
             if existing_core:
                 self.log(f"Core particle for role: {role} already exists with ID: {existing_core.id}", "INFO", "spawn_identity_cores")
@@ -744,7 +726,6 @@ class ParticleField:
 
                 particles.append(core)
 
-                anchor = api.get_api("_agent_anchor")
                 anchor.permanent_cores.append(core)
                 anchor.core_roles[role] = core
                 self.log(f"Spawned core particle for role: {role} with ID: {core.id}", "INFO", "spawn_identity_cores")
@@ -923,7 +904,7 @@ class ParticleField:
                 )
 
                 child.linked_particles["source"] = particle.id
-                particle.linked_particles["children"] = child.id
+                particle.linked_particles["children"].extend([child.id])
 
                 # Energy cost for reproduction
                 particle.energy *= 0.7  # Lose some energy after spawning
@@ -1229,7 +1210,7 @@ class ParticleField:
             self.alive_particles.clear()
             
             # Restore field properties
-            self.creation_counter = field_state.get('creation_counter', 0)
+            self.creation_counter = field_state.get('creation_counter')
             self.certainty_threshold = field_state.get('certainty_threshold', 0.7)
             
             # Restore particles

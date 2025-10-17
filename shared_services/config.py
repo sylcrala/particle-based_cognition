@@ -8,11 +8,14 @@ class Config():
     def __init__(self):
 
         self.user_name = "Tony"
+        
+        self.agent_mode = "cog-growth"   # options: llm-extension (uses LLM for supplementing voice module, linguistic capabilities and knowledge base), cog-growth (no LLM for voice module - agent "grows" its own linguistic capabilities and knowledge base over time)
+        self.agent_name = "Misty" if self.agent_mode == "llm-extension" else "Iris"  # Misty for cog-growth, Iris for llm-extension
 
         self.AGENT_CONFIG = {
-            "name": "Misty",
-            "mode": "llm-extension", # options: llm-extension (uses LLM for supplementing voice module, linguistic capabilities and knowledge base), cog-growth (no LLM for voice module - agent "grows" its own linguistic capabilities and knowledge base over time)
-            "memory_dir": f"./memory/{self.user_name}_{self.AGENT_CONFIG['mode']}",
+            "name": self.agent_name,
+            "mode": self.agent_mode, 
+            "memory_dir": f"./data/{self.agent_name}_{self.agent_mode}",
         } 
 
         self.LLM_CONFIG = {
@@ -21,7 +24,7 @@ class Config():
             "device": "cuda",
             "load_in_4bit": True,
             "temperature": 1.0,
-            "max_new_tokens": 800,
+            "max_new_tokens": 1200,
             "top_p": 0.95,
             "top_k": 50,
             "do_sample": True,
