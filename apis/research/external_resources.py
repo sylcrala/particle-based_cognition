@@ -136,5 +136,3 @@ class ExternalResources:
         else:
             self.log("No synonym pairs merged.")
 
-# Register the API (but mark as experimental)
-api.register_api("external_resources", ExternalResources())

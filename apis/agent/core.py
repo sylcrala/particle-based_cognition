@@ -88,20 +88,28 @@ class AgentCore:
             voice = self.meta_voice, 
             lexicon = self.lexicon_store
         )
-        self.log("CognitionLoop imported successfully", context="AgentCore.__init__")
-
-        self.log("Importing and registering external resources...", context="AgentCore.__init__")
-        # import and register additional resources
-        from apis.research.external_resources import ExternalResources
-        self.log("ExternalResources imported and registered successfully", context="AgentCore.__init__")
 
         self.log("Importing InferenceEngine...", context="AgentCore.__init__")
         from apis.agent.cognition.reasoning.inference_engine import InferenceEngine
         self.inference_engine = InferenceEngine()
         self.log("InferenceEngine imported successfully", context="AgentCore.__init__")
 
-        self.log("Agent Core module imports complete, finalizing module threading", context="AgentCore.__init__")
+        self.log("CognitionLoop imported successfully", context="AgentCore.__init__")
 
+        self.log("Importing research modules...")
+        self.log("Importing external resources...", context="AgentCore.__init__")
+        # import and register additional resources
+        from apis.research.external_resources import ExternalResources
+        self.external_resources = ExternalResources()
+        self.log("ExternalResources imported and registered successfully", context="AgentCore.__init__")
+
+        self.log("Importing wikipedia research module...", context="AgentCore.__init__")
+        from apis.research.wikipedia import WikipediaSearcher
+        self.wikipedia_searcher = WikipediaSearcher()
+        self.log("WikipediaSearcher imported successfully", context="AgentCore.__init__")
+
+
+        self.log("Agent Core module imports complete, finalizing module threading", context="AgentCore.__init__")
         # anchor threading
         self.agent_anchor.field = self.particle_field
         # memory threading
@@ -150,6 +158,10 @@ class AgentCore:
         api.register_api("_agent_events", self.agent_anchor)
         api.register_api("_agent_anchor", self.agent_anchor)
         api.register_api("_agent_inference_engine", self.inference_engine)
+        # research modules
+        api.register_api("external_resources", self.external_resources)
+        api.register_api("wikipedia_searcher", self.wikipedia_searcher)
+
         if self.mode == "llm-extension":
             api.register_api("_agent_model_handler", self.model_handler)
 

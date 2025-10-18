@@ -6,6 +6,7 @@ from apis.api_registry import api
 
 class Config():
     def __init__(self):
+        self.system_language = "en"
 
         self.user_name = "Tony"
         

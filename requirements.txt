@@ -31,6 +31,7 @@ bitsandbytes>=0.41.0  # For 4-bit quantization
 # black>=22.0.0  # For code formatting
 # flake8>=5.0.0  # For linting
 
-# External Resources
+# Research modules
+wikipedia
 nltk
 spacy

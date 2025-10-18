@@ -196,6 +196,28 @@ class CoreParticle(Particle):
             # Add to managed particles
             self.managed_particles += [sensory_particle.id]
             
+            # OPTIONAL: Quick Wikipedia context lookup for key terms in user message
+            # This happens asynchronously and doesn't block response generation
+            context_summary = None
+            try:
+                # Extract potential key terms (simple approach - can be enhanced)
+                words = str(user_message).split()
+                potential_terms = [w for w in words if len(w) > 4 and w[0].isupper()]  # Capitalized words
+                
+                if potential_terms:
+                    wikipedia = api.get_api("wikipedia_searcher")
+                    # Try looking up the first capitalized term
+                    key_term = potential_terms[0].strip('.,!?;:')
+                    summary_result = await wikipedia.quick_search(key_term)
+                    
+                    if summary_result and "error" not in summary_result:
+                        context_summary = summary_result.get("summary", "")
+                        self._log_decision(f"Got Wikipedia context for: {key_term}", "DEBUG")
+                        # Store context for potential use by meta_voice
+                        self.metadata["last_wikipedia_context"] = context_summary
+            except Exception as e:
+                self._log_decision(f"Wikipedia context lookup failed: {e}", "DEBUG")
+            
             # Process through field injection with core context
             #result = await self.field.inject_action(
             #    str(user_message), 
@@ -307,12 +329,13 @@ class CoreParticle(Particle):
         #if self._check_decision_redundancy(event): #TODO: maybe move this to _handle_decision_making after it's set up?
             #self.log("Skipping redundant reflection processing", level="DEBUG", context="_handle_reflection_processing")
             #return
-
         self.log("Processing reflection queue...", context="process_reflection_queue")
 
         try:
             chance = random.random()
-            if chance < 0.315: # ~31.5% chance every cycle
+            
+            # Use proper probability ranges (0.0 to 1.0)
+            if chance < 0.35:  # 35% - Lingual particle reflections
                 self.log("Processing lingual particle reflections...", context="process_reflection_queue")
                 particles = self.field.get_particles_by_type("lingual")
                 reflection_candidates = [p for p in particles if p.metadata.get("needs_reflection", False) and p.activation > 0.5]
@@ -324,14 +347,10 @@ class CoreParticle(Particle):
                         particle.metadata["needs_reflection"] = False
                         self.log(f"Processed reflection for particle {particle.id}", "DEBUG", "process_reflection_queue")       
         
-            self.log("lingual particle reflection processing completed", context="process_reflection_queue")
-            self._update_decision_history(event, result="Lingual particles reflection processed")
-        except Exception as e:
-            self.log(f"lingual particle reflection processing error: {e}", level="ERROR", context="process_reflection_queue")
+                self.log("lingual particle reflection processing completed", context="process_reflection_queue")
+                self._update_decision_history(event, result="Lingual particles reflection processed")
 
-        try:
-            chance = random.random()
-            if chance < 0.315: # ~31.5% chance every cycle
+            elif chance < 0.60:  # 25% - Memory particle reflections (0.35 to 0.60)
                 self.log("Processing memory particle reflections...", context="process_reflection_queue")
                 particles = self.field.get_particles_by_type("memory")
                 memory_candidates = [p for p in particles if p.activation > 0.5]
@@ -342,29 +361,80 @@ class CoreParticle(Particle):
 
                 self.log("Memory particle reflection processing completed", context="process_reflection_queue")
                 self._update_decision_history(event, result="Memory reflection processed")
-        except Exception as e:
-            self.log(f"Random memory consolidation error: {e}", level="ERROR", context="process_reflection_queue")
 
-        try:
-            chance = random.random()
-            if chance < 0.1575: # ~15.75% chance every cycle
+            elif chance < 0.80:  # 20% - Generative reflection (0.60 to 0.80)
                 try:
                     self.log("Processing generative reflection...", context="process_reflection_queue")
                     particle_list = self.field.get_all_particles()
                     alive_particles = [p for p in particle_list if p.id in self.field.alive_particles]
-                    chosen_particle = random.choice(alive_particles)
-                    reflection_particle = chosen_particle
-                    reflection_particle.metadata["needs_reflection"] = False
-                    await self.meta_voice.reflect(particle = reflection_particle)
-                    self.log("Generative reflection completed", context="process_reflection_queue")
-                    self._update_decision_history(event, result="Generative reflection processed")
+                    if alive_particles:
+                        chosen_particle = random.choice(alive_particles)
+                        chosen_particle.metadata["needs_reflection"] = False
+                        await self.meta_voice.reflect(particle = chosen_particle)
+                        self.log("Generative reflection completed", context="process_reflection_queue")
+                        self._update_decision_history(event, result="Generative reflection processed")
                 except Exception as e:
                     self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
                     import traceback
                     self.log(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="process_reflection_queue")
 
+            else:  # 20% - Wikipedia learning reflection (0.80 to 1.0)
+                try:
+                    self.log("Processing Wikipedia learning reflection...", context="process_reflection_queue")
+                    wikipedia = api.get_api("wikipedia_searcher")
+                    
+                    # Choose category based on recent particle activity
+                    categories = ["science", "philosophy", "language", "psychology", "technology", "arts", "history"]
+                    chosen_category = random.choice(categories)
+                    
+                    # Fetch random article from category
+                    article = await wikipedia.random_article_by_category(chosen_category)
+                    
+                    if article and "error" not in article:
+                        # Create memory particle from article content
+                        article_title = article.get("title", "Unknown")
+                        article_summary = article.get("content", "")[:500]  # First 500 chars
+                        article_url = article.get("url", "")
+                        
+                        self.log(f"Learning from Wikipedia: {article_title}", "INFO", "process_reflection_queue")
+                        
+                        # Create knowledge memory particle
+                        knowledge_particle = await self.field.spawn_particle(
+                            type="memory",
+                            metadata={
+                                "content": f"Wikipedia: {article_title} - {article_summary}",
+                                "source": "wikipedia_reflection",
+                                "article_title": article_title,
+                                "article_url": article_url,
+                                "category": chosen_category,
+                                "timestamp": datetime.datetime.now().isoformat()
+                            },
+                            energy=0.7,
+                            activation=0.6,
+                            source_particle_id=str(self.id),
+                            emit_event=False
+                        )
+                        
+                        if knowledge_particle:
+                            self.managed_particles.append(knowledge_particle.id)
+                            
+                            # Also reflect on the new knowledge
+                            await self.meta_voice.reflect(particle=knowledge_particle)
+                            
+                            self.log(f"Wikipedia learning completed: {article_title}", "INFO", "process_reflection_queue")
+                            self._update_decision_history(event, result=f"Wikipedia learning: {article_title}")
+                    else:
+                        self.log(f"Wikipedia fetch error: {article.get('error', 'Unknown error')}", "WARNING", "process_reflection_queue")
+                    
+                except Exception as e:
+                    self.log(f"Wikipedia learning reflection error: {e}", level="ERROR", context="process_reflection_queue")
+                    import traceback
+                    self.log(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="process_reflection_queue")
+                    
         except Exception as e:
-            self.log(f"Generative reflection error: {e}", level="ERROR", context="process_reflection_queue")
+            self.log(f"Reflection processing error: {e}", level="ERROR", context="process_reflection_queue")
+            import traceback
+            self.log(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="process_reflection_queue")
 
 
     async def _handle_identity_check(self, event):
@@ -459,6 +529,19 @@ class CoreParticle(Particle):
                 
                 self._log_decision(f"Consolidated {consolidated} high-confidence inferences", "INFO")
                 
+                # 5. TRIGGER HYPOTHESIS GENERATION if knowledge gaps detected
+                if len(self.knowledge_gaps) > 0:
+                    self._log_decision(f"Triggering hypothesis generation for {len(self.knowledge_gaps)} gaps", "DEBUG")
+                    # Emit hypothesis request event for hypothesis generator core
+                    events = api.get_api("_agent_events")
+                    if events:
+                        await events.emit_event(
+                            "hypothesis_request",
+                            data={"gaps": self.knowledge_gaps, "trigger": "reasoning_cycle"},
+                            source="reasoning_coordinator",
+                            priority=4  # Medium-low priority
+                        )
+                
                 self._update_decision_history(event, result=f"{len(inference_chains)} inferences, {len(contradictions)} contradictions")
                 return {
                     "inferences": len(inference_chains), 
@@ -473,6 +556,18 @@ class CoreParticle(Particle):
                 
                 gaps = await self._detect_knowledge_gaps()
                 self._log_decision(f"Detected {len(gaps)} knowledge gaps", "DEBUG")
+                
+                # Trigger hypothesis generation if gaps found
+                if len(gaps) > 0:
+                    self._log_decision(f"Triggering hypothesis generation for {len(gaps)} gaps", "DEBUG")
+                    events = api.get_api("_agent_events")
+                    if events:
+                        await events.emit_event(
+                            "hypothesis_request",
+                            data={"gaps": gaps, "trigger": "reasoning_cycle"},
+                            source="reasoning_coordinator",
+                            priority=4
+                        )
                 
                 consolidated = await self._consolidate_inferences(inferences)
                 self._log_decision(f"Consolidated {consolidated} inferences into memory", "INFO")
@@ -745,6 +840,38 @@ class CoreParticle(Particle):
                 if len(self.learning_moments) > 100:
                     self.learning_moments = self.learning_moments[-50:]
                 
+                # If high novelty, look up on Wikipedia for deeper understanding
+                if novelty_score > 0.7:
+                    try:
+                        wikipedia = api.get_api("wikipedia_searcher")
+                        summary = await wikipedia.quick_search(token)
+                        
+                        if summary and "error" not in summary:
+                            self._log_decision(f"Enriched learning with Wikipedia: {token}", "INFO")
+                            # Add Wikipedia context to the learning memory
+                            if learning_memory:
+                                learning_memory.metadata["wikipedia_summary"] = summary.get("summary", "")
+                                learning_memory.metadata["enriched_via_wikipedia"] = True
+                    except Exception as e:
+                        self._log_decision(f"Wikipedia enrichment failed for {token}: {e}", "WARNING")
+                
+                # Trigger hypothesis generation for novel concepts
+                # New knowledge might suggest connections that need exploration
+                if novelty_score > 0.8 and len(related_concepts) > 2:
+                    self._log_decision(f"Triggering hypothesis generation for novel concept: {token}", "DEBUG")
+                    events = api.get_api("_agent_events")
+                    if events:
+                        await events.emit_event(
+                            "speculation_needed",
+                            data={
+                                "concept": token,
+                                "related_concepts": [str(c) for c in related_concepts[:5]],
+                                "trigger": "high_novelty_learning"
+                            },
+                            source="knowledge_curator",
+                            priority=5  # Lower priority - speculative
+                        )
+                
                 self._update_decision_history(event, result=f"Processed learning: {token}")
                 return learning_memory
             
@@ -842,23 +969,48 @@ class CoreParticle(Particle):
         self._log_decision("Starting hypothesis generation cycle", "INFO")
         
         try:
-            # Generate hypotheses based on knowledge gaps
-            hypotheses = await self._generate_hypotheses()
+            event_data = event.get("data", {})
+            trigger_type = event_data.get("trigger", "unknown")
+            
+            # Generate hypotheses based on trigger type
+            if trigger_type == "reasoning_cycle":
+                # Gap-based hypothesis generation
+                gaps = event_data.get("gaps", [])
+                self._log_decision(f"Generating hypotheses from {len(gaps)} knowledge gaps", "DEBUG")
+                hypotheses = await self._generate_hypotheses_from_gaps(gaps)
+                
+            elif trigger_type == "high_novelty_learning":
+                # Concept-connection hypothesis generation
+                concept = event_data.get("concept", "")
+                related = event_data.get("related_concepts", [])
+                self._log_decision(f"Generating hypotheses for novel concept: {concept}", "DEBUG")
+                hypotheses = await self._generate_hypotheses_from_concept(concept, related)
+                
+            else:
+                # Fallback: generate from reasoning coordinator's gaps
+                self._log_decision("Generating hypotheses from stored knowledge gaps", "DEBUG")
+                hypotheses = await self._generate_hypotheses()
+            
             self._log_decision(f"Generated {len(hypotheses)} hypotheses", "DEBUG")
             
             # Test hypotheses via field simulation
-            tested = await self._test_hypotheses(hypotheses)
-            self._log_decision(f"Tested {tested} hypotheses", "DEBUG")
+            if len(hypotheses) > 0:
+                tested = await self._test_hypotheses(hypotheses)
+                self._log_decision(f"Tested {tested} hypotheses", "DEBUG")
+            else:
+                tested = 0
             
             self._update_decision_history(event, result=f"{len(hypotheses)} generated, {tested} tested")
             return {"generated": len(hypotheses), "tested": tested}
             
         except Exception as e:
             self._log_decision(f"Hypothesis generation error: {e}", "ERROR")
+            import traceback
+            self._log_decision(f"Traceback: {traceback.format_exc()}", "ERROR")
             return None
 
     async def _generate_hypotheses(self):
-        """Generate speculative hypotheses from knowledge gaps"""
+        """Generate speculative hypotheses from knowledge gaps (fallback method)"""
         hypotheses = []
         
         try:
@@ -866,23 +1018,75 @@ class CoreParticle(Particle):
             reasoning_core = self._get_core_by_role("reasoning_coordinator")
             if reasoning_core and hasattr(reasoning_core, 'knowledge_gaps'):
                 gaps = reasoning_core.knowledge_gaps[:5]  # Top 5 gaps
-                
-                for gap in gaps:
-                    # Create hypothesis particle for this gap
-                    hypothesis = {
-                        "gap_position": gap["position"],
-                        "nearby_concepts": gap.get("nearby_concepts", []),
-                        "hypothesis_content": f"Possible connection between: {', '.join(gap.get('nearby_concepts', [])[:3])}",
-                        "timestamp": datetime.datetime.now().isoformat(),
-                        "tested": False
-                    }
-                    hypotheses.append(hypothesis)
+                hypotheses = await self._generate_hypotheses_from_gaps(gaps)
+            
+            return hypotheses
+            
+        except Exception as e:
+            self._log_decision(f"Hypothesis generation error: {e}", "ERROR")
+            return []
+
+    async def _generate_hypotheses_from_gaps(self, gaps):
+        """Generate hypotheses specifically from knowledge gaps"""
+        hypotheses = []
+        
+        try:
+            for gap in gaps[:5]:  # Top 5 gaps
+                # Create hypothesis particle for this gap
+                hypothesis = {
+                    "type": "gap_filling",
+                    "gap_position": gap["position"],
+                    "nearby_concepts": gap.get("nearby_concepts", []),
+                    "hypothesis_content": f"Possible connection between: {', '.join(gap.get('nearby_concepts', [])[:3])}",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "tested": False,
+                    "confidence": 0.3  # Low confidence - speculative
+                }
+                hypotheses.append(hypothesis)
             
             self.active_hypotheses.extend(hypotheses)
             return hypotheses
             
         except Exception as e:
-            self._log_decision(f"Hypothesis generation error: {e}", "ERROR")
+            self._log_decision(f"Gap-based hypothesis generation error: {e}", "ERROR")
+            return []
+
+    async def _generate_hypotheses_from_concept(self, concept, related_concepts):
+        """Generate hypotheses about connections between a novel concept and related ones"""
+        hypotheses = []
+        
+        try:
+            # Generate pairwise connection hypotheses
+            for related in related_concepts[:3]:  # Top 3 related concepts
+                hypothesis = {
+                    "type": "concept_connection",
+                    "main_concept": concept,
+                    "related_concept": related,
+                    "hypothesis_content": f"Exploring connection: {concept} ↔ {related}",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "tested": False,
+                    "confidence": 0.4  # Medium-low confidence
+                }
+                hypotheses.append(hypothesis)
+            
+            # Generate broader pattern hypothesis
+            if len(related_concepts) >= 3:
+                hypothesis = {
+                    "type": "pattern_detection",
+                    "main_concept": concept,
+                    "related_concepts": related_concepts[:5],
+                    "hypothesis_content": f"Pattern involving {concept} and {len(related_concepts)} related concepts",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "tested": False,
+                    "confidence": 0.5  # Medium confidence
+                }
+                hypotheses.append(hypothesis)
+            
+            self.active_hypotheses.extend(hypotheses)
+            return hypotheses
+            
+        except Exception as e:
+            self._log_decision(f"Concept-based hypothesis generation error: {e}", "ERROR")
             return []
 
     def _get_core_by_role(self, role):
