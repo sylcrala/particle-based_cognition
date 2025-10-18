@@ -169,25 +169,25 @@ class ParticleField:
                 )
                 particle.process_environmental_input("unknown_spawn", "particle_type_unknown")
 
-            
+            if not hasattr(particle, 'linked_particles') or particle.linked_particles is None:
+                particle.linked_particles = {"source": None, "children": [], "ghost": []}
+
             # Track particle linkage for cognitive mapping - ADD VALIDATION HERE
             if source_particle_id:
                 # Validate that the source particle exists and is alive
                 source_particle = self.get_particle_by_id(source_particle_id)
                 if source_particle and source_particle.alive and source_particle.id in self.alive_particles:
                     # Valid linkage - proceed with linking
-                    particle.linked_particles = {"source": source_particle_id}
+                    particle.linked_particles["source"] = source_particle_id
                     particle.source_particle_id = str(source_particle_id)
                     
                     # Also update the source particle to know about this child
-                    if not hasattr(source_particle, 'linked_particles'):
-                        source_particle.linked_particles = {}
                     if 'children' not in source_particle.linked_particles:
                         source_particle.linked_particles['children'] = []
                     
                     # Prevent duplicate child entries
                     if particle.id not in source_particle.linked_particles['children']:
-                        source_particle.linked_particles['children'].extend([particle.id])
+                        source_particle.linked_particles['children'].append(particle.id)
 
                     
                     self.log(f"Successfully linked particle {particle.id} to source {source_particle_id}", 
@@ -195,17 +195,15 @@ class ParticleField:
                 
                 if source_particle and source_particle.alive == False and source_particle_id not in self.alive_particles:
                     # Link to a dead particle - spawn as a new particle with ghost traces (keep old particle links for full historical interconnectedness (this way, old dead particles are able to be *respawned* and referenced))
-                    particle.linked_particles = {"ghost": source_particle_id} # mark as ghost linkage
+                    particle.linked_particles["ghost"] = source_particle_id # mark as ghost linkage
 
                     # Also update the source particle to know about this ghost child
-                    if not hasattr(source_particle, 'linked_particles'):
-                        source_particle.linked_particles = {}
                     if 'ghost' not in source_particle.linked_particles:
                         source_particle.linked_particles['ghost'] = []
                     
                     # Prevent duplicate ghost child entries
                     if particle.id not in source_particle.linked_particles['ghost']:
-                        source_particle.linked_particles['ghost'].extend([particle.id])
+                        source_particle.linked_particles['ghost'].append(particle.id)
 
                     self.log(f"Warning: Linked to dead particle {source_particle_id}, spawning as ghost trace",
                             level="WARNING", context="spawn_particle")
@@ -214,11 +212,12 @@ class ParticleField:
                     # Invalid source - spawn as orphan with warning
                     self.log(f"Warning: Cannot link to non-existent particle {source_particle_id}, spawning as orphan", 
                             level="WARNING", context="spawn_particle")
-                    particle.linked_particles = {}
-                    source_particle_id = None  # Clear for logging
+                    if not hasattr(particle, 'linked_particles') or particle.linked_particles is None:
+                        particle.linked_particles = {"source": None, "children": [], "ghost": []}
 
             else:
-                particle.linked_particles = {}
+                if not hasattr(particle, 'linked_particles') or particle.linked_particles is None:
+                    particle.linked_particles = {"source": None, "children": [], "ghost": []}
 
             # Add to field
             self.particles.append(particle)
@@ -904,7 +903,7 @@ class ParticleField:
                 )
 
                 child.linked_particles["source"] = particle.id
-                particle.linked_particles["children"].extend([child.id])
+                particle.linked_particles["children"].append(child.id)
 
                 # Energy cost for reproduction
                 particle.energy *= 0.7  # Lose some energy after spawning

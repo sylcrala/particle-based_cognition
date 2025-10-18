@@ -139,7 +139,7 @@ class LexiconStore:
                     source=source,
                     tags=updated_tags,
                     memory_type="lexicon",  # This routes to lexicon collection
-                    source_particle_id=particle_id,
+                    source_particle_id=str(particle_id),
                     consciousness_level=new_entry.get("consciousness_level", 0.5),
                     **kwargs  # Pass through any additional metadata
                 )

@@ -95,6 +95,11 @@ class AgentCore:
         from apis.research.external_resources import ExternalResources
         self.log("ExternalResources imported and registered successfully", context="AgentCore.__init__")
 
+        self.log("Importing InferenceEngine...", context="AgentCore.__init__")
+        from apis.agent.cognition.reasoning.inference_engine import InferenceEngine
+        self.inference_engine = InferenceEngine()
+        self.log("InferenceEngine imported successfully", context="AgentCore.__init__")
+
         self.log("Agent Core module imports complete, finalizing module threading", context="AgentCore.__init__")
 
         # anchor threading
@@ -144,8 +149,12 @@ class AgentCore:
         api.register_api("_agent_adaptive_engine", self.adaptive_engine)
         api.register_api("_agent_events", self.agent_anchor)
         api.register_api("_agent_anchor", self.agent_anchor)
+        api.register_api("_agent_inference_engine", self.inference_engine)
         if self.mode == "llm-extension":
             api.register_api("_agent_model_handler", self.model_handler)
+
+        # Initialize inference engine after APIs are registered
+        self.inference_engine.initialize()
 
         await self.agent_anchor.initialize()
 
@@ -307,7 +316,10 @@ class AgentAnchor:
             "social_interaction": None,
             "system_monitoring": None,
             "reflective_thoughts": None,
-            "identity_anchor": None
+            "identity_anchor": None,
+            "reasoning_coordinator": None,
+            "knowledge_curator": None,
+            "hypothesis_generator": None
         }
 
         # References
@@ -353,7 +365,9 @@ class AgentAnchor:
             "reflection_triggered": self.handle_reflection,
             "reflection_request": self.handle_reflection,
             "cognitive_event": self.handle_cognitive_event,
-            "memory_event": self.handle_memory_event
+            "memory_event": self.handle_memory_event,
+            "reasoning_cycle": self.handle_reasoning_cycle,
+            "learning_moment_detected": self.handle_learning_moment
         })
     
     async def emit_event(self, event_type, data=None, source="unknown", priority=None):
@@ -459,15 +473,17 @@ class AgentAnchor:
     def get_default_priority(self, event_type, source):
         """Get default priority for different event types"""
         priority_map = {
-            "user_input": 1,
+            "user_input": 2,
             "shutdown": 0,
-            "particle_created": 3,
-            "system_idle": 8,
-            "system_events": 7,
-            "cognitive_event": 5,
-            "reflection_triggered": 6, # internal trigger for reflection
-            "reflection_request": 4, # external request for reflection
-            "memory_event": 6
+            "particle_created": 2,
+            "system_idle": 7,
+            "system_events": 1,
+            "cognitive_event": 3,
+            "reflection_triggered": 4, # internal trigger for reflection
+            "reflection_request": 6, # external request for reflection
+            "memory_event": 3,
+            "reasoning_cycle": 2,
+            "learning_moment_detected": 3
         }
         
         base_priority = priority_map.get(event_type, 5)
@@ -597,7 +613,7 @@ class AgentAnchor:
                 metadata=particle_data.get("metadata", {}),
                 energy=particle_data.get("energy", 0.5),
                 activation=particle_data.get("activation", 0.5),
-                source_particle_id=core_particle.id if core_particle else None,
+                source_particle_id=str(core_particle.id) if core_particle else None,
                 emit_event=False  # Avoid recursive event emission
             )
             self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}", "DEBUG", context="handle_particle_created")
@@ -640,7 +656,7 @@ class AgentAnchor:
             if field:
                 try:
                     input_for_agent = f"{user_name} said: <s>{user_data}</s>"
-                    result = await field.inject_action(input_for_agent, source="user_input", source_particle_id=core_particle.id if core_particle else None)
+                    result = await field.inject_action(input_for_agent, source="user_input", source_particle_id=str(core_particle.id) if core_particle else None)
                     
                     if result:
                         self.log(f"User input processed, response generated: {result}", "DEBUG", context="handle_user_input")
@@ -714,6 +730,52 @@ class AgentAnchor:
         except Exception as e:
             self.log(f"Error routing reflection through core: {e} | handling directly", "ERROR", context="handle_reflection")
             self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_reflection")
+            return False
+        
+    async def handle_reasoning_cycle(self, event, core_particle=None):
+        """Handle reasoning cycle events from CoT pipeline"""
+        event_type = event["type"]
+        event_data = event["data"]
+        
+        # Extract trigger information if available
+        trigger_source = "unknown"
+        if isinstance(event_data, dict):
+            trigger_source = event_data.get("trigger", "unknown")
+        
+        self.log(f"Reasoning cycle triggered: {trigger_source}", "DEBUG", context="handle_reasoning_cycle")
+        
+        try:
+            handling_core = self.get_core_by_role("reasoning_coordinator")
+            if handling_core:
+                result = await self.handle_event_through_core(handling_core, event)
+                self.log(f"Reasoning cycle handled by core: {handling_core.id}", "DEBUG", context="handle_reasoning_cycle")
+                return result
+            else:
+                self.log("No reasoning coordinator core found", "WARNING", context="handle_reasoning_cycle")
+                return False
+        except Exception as e:
+            self.log(f"Error routing reasoning cycle through core: {e}", "ERROR", context="handle_reasoning_cycle")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_reasoning_cycle")
+            return False
+
+    async def handle_learning_moment(self, event, core_particle=None):
+        """Handle learning moment detection events"""
+        learning_data = event.get("data", {})
+        token = learning_data.get("token", "unknown")
+        self.log(f"Learning moment detected: {token}", "DEBUG", context="handle_learning_moment")
+        
+        try:
+            handling_core = self.get_core_by_role("knowledge_curator")
+            if handling_core:
+                result = await self.handle_event_through_core(handling_core, event)
+                self.log(f"Learning moment handled by core: {handling_core.id}", "DEBUG", context="handle_learning_moment")
+                return result
+            else:
+                self.log("No knowledge curator core found", "WARNING", context="handle_learning_moment")
+                return False
+        except Exception as e:
+            self.log(f"Error routing learning moment through core: {e}", "ERROR", context="handle_learning_moment")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_learning_moment")
             return False
 
     async def handle_cognitive_event(self, event, core_particle = None):

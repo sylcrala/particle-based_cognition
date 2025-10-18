@@ -272,7 +272,44 @@ class LingualParticle(Particle):
             )
 
             self.log(f"[Learn] Lexical acquisition complete: {token} | type: {classified.get('type')}", source="LingualParticle", context="learn()")
+            
+            # Trigger learning moment notification for knowledge curator (cog-growth mode only)
+            if self.config.agent_mode == "cog-growth" and definition:
+                # Only trigger for significant learning (not punctuation, common words, etc.)
+                if classified.get("type") not in ["punctuation", "common", "stop_word"]:
+                    await self._trigger_learning_moment_event({
+                        "token": token,
+                        "definition": definition,
+                        "classification": classified,
+                        "sources": sources,
+                        "particle_id": str(self.id),
+                        "context": context,
+                        "origin": origin
+                    })
 
+
+    async def _trigger_learning_moment_event(self, learning_data):
+        """Notify knowledge curator core of significant learning event"""
+        try:
+            anchor = api.get_api("_agent_anchor")
+            if anchor:
+                await anchor.emit_event(
+                    "learning_moment_detected",
+                    learning_data,
+                    source="lingual_particle_learning"
+                )
+                self.log(
+                    f"Triggered learning moment for: {learning_data.get('token')}", 
+                    "DEBUG", 
+                    "_trigger_learning_moment_event"
+                )
+        except Exception as e:
+            # Fail gracefully - learning still happened locally
+            self.log(
+                f"Failed to trigger learning moment event: {e}", 
+                "WARNING",
+                "_trigger_learning_moment_event"
+            )
 
     async def learn_from_particle(self, particle=None):
 
@@ -338,6 +375,17 @@ class LingualParticle(Particle):
         )
 
         self.log(f"[Learn] learned about {particle.id} | {particle.type}.", source="LingualParticle", context="learn_from_particle()")
+        
+        # Trigger learning moment for knowledge curator (batch learning from particle)
+        if self.config.agent_mode == "cog-growth" and len(tokens) > 0:
+            await self._trigger_learning_moment_event({
+                "tokens": tokens[:5],  # Send first 5 tokens
+                "source_particle": str(particle.id),
+                "particle_type": particle.type,
+                "learning_type": "particle_observation",
+                "particle_id": str(self.id),
+                "context": context
+            })
 
 
     async def define_term(self, term, phrase=None):

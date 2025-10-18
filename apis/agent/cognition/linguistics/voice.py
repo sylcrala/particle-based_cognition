@@ -113,9 +113,28 @@ class MetaVoice:
             )
             self.log(f"Internal processing triggered {len(collapse_log)} particle collapses")
 
-        # Debug check
-        if "children" not in input_particle.linked_particles:
-            self.log(f"WARNING: children key missing from particle {input_particle.id}", "WARNING")
+        # Trigger reasoning cycle for pseudo-Chain-of-Thought before generation
+        anchor = api.get_api("_agent_anchor")
+        if anchor:
+            try:
+                await anchor.emit_event(
+                    "reasoning_cycle",
+                    {
+                        "trigger": "mid_generation_cot",
+                        "input_prompt": prompt,
+                        "input_particle_id": str(input_particle.id),
+                        "source": source
+                    },
+                    source="voice_generation_cot"
+                )
+                self.log(f"Triggered mid-generation reasoning cycle for CoT pipeline", "DEBUG", context="generate_internal")
+            except Exception as e:
+                self.log(f"Failed to trigger reasoning cycle: {e}", "WARNING", context="generate_internal")
+
+        # Debug linkage check
+        if not hasattr(input_particle, 'linked_particles') or input_particle.linked_particles is None:
+            input_particle.linked_particles = {"source": None, "children": [], "ghost": []}
+        elif "children" not in input_particle.linked_particles:
             input_particle.linked_particles["children"] = []
 
         self.log(f"DEBUG: children type: {type(input_particle.linked_particles['children'])}", "DEBUG")
@@ -675,6 +694,24 @@ class MetaVoice:
                 reflection_prompt = f"[Reflection] Reflecting on: {str(await particle.get_content())}"
                 self.log(f"Reflecting on particle {particle.id}: {str(await particle.get_content())}")
 
+            # Trigger reasoning cycle before reflection generation for CoT processing
+            anchor = api.get_api("_agent_anchor")
+            if anchor:
+                try:
+                    await anchor.emit_event(
+                        "reasoning_cycle",
+                        {
+                            "trigger": "reflection_cot",
+                            "reflection_prompt": reflection_prompt,
+                            "target_particle_id": str(particle.id) if particle else None,
+                            "reflection_type": "generative" if particle is None else "targeted"
+                        },
+                        source="voice_reflection_cot"
+                    )
+                    self.log(f"Triggered reasoning cycle for reflection CoT pipeline", "DEBUG", context="reflect")
+                except Exception as e:
+                    self.log(f"Failed to trigger reasoning cycle during reflection: {e}", "WARNING", context="reflect")
+
             context_id=str(uuid.uuid4())
 
             reflection_response = await self.generate(
@@ -699,7 +736,14 @@ class MetaVoice:
                 emit_event=False
             )
             if chance < 0.15:
-                await response_particle.learn(reflection_response)
+                if isinstance(reflection_response, str):
+                    await response_particle.learn(reflection_response)
+                elif isinstance(reflection_response, list):
+                    for token in reflection_response:
+                        if isinstance(token, str):
+                            await response_particle.learn(token)
+                else:
+                    self.log(f"Unexpected reflection_response type: {type(reflection_response)}", "WARNING")
             
             try:
                 await self.memory_bank.update(

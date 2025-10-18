@@ -194,6 +194,12 @@ class CognitionLoop:
                             context="subconscious_loop")
                     await self.events.emit_event("reflection_triggered", "Request to process particle reflections", source="subconscious_loop")
 
+                # Trigger autonomous reasoning every 15 cycles
+                if self.subconscious_cycle_count % 15 == 0:
+                    self.log(f"Triggering autonomous reasoning cycle {self.subconscious_cycle_count}", 
+                            context="subconscious_loop")
+                    await self.events.emit_event("reasoning_cycle", "Autonomous reasoning and inference", source="subconscious_loop")
+
                 # Log and save field state periodically
                 if self.subconscious_cycle_count % 500 == 0:
                     self.log(f"Saving field state on cycle {self.subconscious_cycle_count}", 

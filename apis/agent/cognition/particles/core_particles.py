@@ -68,6 +68,26 @@ class CoreParticle(Particle):
         elif self.role == "reflective_thoughts":
             self.metadata["context"] = "Core particle facilitating reflective thought and self-modeling."
             self.metadata["tags"] = ["core", "reflective", "thoughts", "self-modeling", f"{self.persistence_lvl}"]
+        elif self.role == "reasoning_coordinator":
+            self.metadata["context"] = "Core particle coordinating autonomous inference, multi-hop reasoning, and knowledge integration."
+            self.metadata["tags"] = ["core", "reasoning", "inference", "learning", "autonomous", f"{self.persistence_lvl}"]
+            self.inference_queue = []
+            self.knowledge_gaps = []
+            self.hypothesis_particles = []
+            self.reasoning_depth = 3  # Max hops for inference chains
+            self.inference_engine = api.get_api("_agent_inference_engine")  # Get inference engine from API
+        elif self.role == "knowledge_curator":
+            self.metadata["context"] = "Core particle managing external resource parsing, learning moments detection, and knowledge integration."
+            self.metadata["tags"] = ["core", "knowledge", "learning", "external_resources", "curation", f"{self.persistence_lvl}"]
+            self.processed_resources = []
+            self.learning_moments = []
+            self.integration_queue = []
+        elif self.role == "hypothesis_generator":
+            self.metadata["context"] = "Core particle generating and testing speculative inferences and exploratory hypotheses."
+            self.metadata["tags"] = ["core", "hypothesis", "speculation", "exploration", "testing", f"{self.persistence_lvl}"]
+            self.active_hypotheses = []
+            self.validated_hypotheses = []
+            self.rejected_hypotheses = []
         else:
             self.metadata["context"] = f"Core particle with role {self.role}."
             self.metadata["tags"] = ["core", "anchor", self.role, self.persistence_lvl]
@@ -87,7 +107,7 @@ class CoreParticle(Particle):
             persistence_lvl="temporary",
             emit_event=False
         )
-        temp_core.source_particle_id = self.id
+        temp_core.source_particle_id = str(self.id)
         temp_core.metadata["context"] = context
         return temp_core
 
@@ -122,6 +142,18 @@ class CoreParticle(Particle):
             elif self.role == "reflective_thoughts":
                 if event_type in ["reflection_triggered", "self_modeling"]:
                     result = await self._handle_reflection_processing(event)
+                    return result
+            elif self.role == "reasoning_coordinator":
+                if event_type in ["reasoning_cycle", "inference_request", "knowledge_integration"]:
+                    result = await self._handle_reasoning_cycle(event)
+                    return result
+            elif self.role == "knowledge_curator":
+                if event_type in ["learning_moment_detected", "resource_parsing", "knowledge_update"]:
+                    result = await self._handle_knowledge_curation(event)
+                    return result
+            elif self.role == "hypothesis_generator":
+                if event_type in ["hypothesis_request", "speculation_needed", "exploration_trigger"]:
+                    result = await self._handle_hypothesis_generation(event)
                     return result
             elif self.role == "system_monitoring":
                 if event_type == "system_events":
@@ -172,7 +204,7 @@ class CoreParticle(Particle):
             #)
 
             # generate via meta voice directly
-            result = await self.meta_voice.generate(prompt=user_message, source="user_input", source_particle_id=self.id)
+            result = await self.meta_voice.generate(prompt=user_message, source="user_input", source_particle_id=str(self.id))
 
             self._update_decision_history(event, result=result)
             self._log_decision(f"Processed user interaction: {user_message}", level="INFO")
@@ -239,7 +271,7 @@ class CoreParticle(Particle):
                 activation=0.3,
             )
             if sensory_p:
-                sensory_p.source_particle_id = self.id
+                sensory_p.source_particle_id = str(self.id)
                 self.managed_particles += [sensory_p.id]
 
                 sensory_p.process_environmental_input(
@@ -369,3 +401,536 @@ class CoreParticle(Particle):
             if record["event_type"] == event.get("type"):
                 return True
         return False
+
+    # ==================== REASONING COORDINATOR METHODS ====================
+    
+    async def _handle_reasoning_cycle(self, event):
+        """Autonomous reasoning cycle: inference, gap detection, consolidation"""
+        self._log_decision("Starting autonomous reasoning cycle", "INFO")
+        
+        try:
+            # Use inference engine if available, otherwise fallback to basic implementation
+            if self.inference_engine:
+                # 1. MULTI-HOP INFERENCE via InferenceEngine
+                inference_chains = await self.inference_engine.perform_multi_hop_inference(
+                    start_particles=None,  # Auto-select
+                    max_depth=self.reasoning_depth,
+                    min_confidence=0.5
+                )
+                self._log_decision(f"InferenceEngine generated {len(inference_chains)} chains", "DEBUG")
+                
+                # 2. CONTRADICTION DETECTION
+                contradictions = await self.inference_engine.detect_contradictions()
+                self._log_decision(f"Detected {len(contradictions)} contradictions", "DEBUG")
+                
+                # Resolve contradictions
+                for contradiction in contradictions[:3]:  # Resolve top 3
+                    resolution = await self.inference_engine.resolve_contradiction(contradiction)
+                    self._log_decision(f"Resolved contradiction via {resolution}", "DEBUG")
+                
+                # 3. CONCEPT ABSTRACTION (periodic)
+                import random
+                if random.random() < 0.2:  # 20% chance
+                    hierarchy = await self.inference_engine.build_concept_hierarchy()
+                    self._log_decision(f"Built hierarchy with {len(hierarchy)} concepts", "DEBUG")
+                
+                # 4. CONSOLIDATE INFERENCES
+                consolidated = 0
+                for chain in inference_chains:
+                    if chain.confidence > 0.6:
+                        # Create memory particle for high-confidence inference
+                        memory_particle = await self.field.spawn_particle(
+                            type="memory",
+                            metadata={
+                                "content": chain.to_dict()["content_chain"],
+                                "source": "reasoning_coordinator",
+                                "inference_type": chain.reasoning_type,
+                                "confidence": chain.confidence,
+                                "timestamp": chain.timestamp.isoformat()
+                            },
+                            energy=0.7,
+                            activation=0.6,
+                            source_particle_id=str(self.id),
+                            emit_event=False
+                        )
+                        if memory_particle:
+                            self.managed_particles.append(memory_particle.id)
+                            consolidated += 1
+                
+                self._log_decision(f"Consolidated {consolidated} high-confidence inferences", "INFO")
+                
+                self._update_decision_history(event, result=f"{len(inference_chains)} inferences, {len(contradictions)} contradictions")
+                return {
+                    "inferences": len(inference_chains), 
+                    "contradictions": len(contradictions),
+                    "consolidated": consolidated
+                }
+            
+            else:
+                # Fallback to basic implementation
+                inferences = await self._perform_multi_hop_inference()
+                self._log_decision(f"Generated {len(inferences)} multi-hop inferences", "DEBUG")
+                
+                gaps = await self._detect_knowledge_gaps()
+                self._log_decision(f"Detected {len(gaps)} knowledge gaps", "DEBUG")
+                
+                consolidated = await self._consolidate_inferences(inferences)
+                self._log_decision(f"Consolidated {consolidated} inferences into memory", "INFO")
+                
+                self._update_decision_history(event, result=f"{len(inferences)} inferences, {len(gaps)} gaps")
+                return {"inferences": len(inferences), "gaps": len(gaps), "consolidated": consolidated}
+            
+        except Exception as e:
+            self._log_decision(f"Reasoning cycle error: {e}", "ERROR")
+            import traceback
+            self._log_decision(f"Traceback: {traceback.format_exc()}", "ERROR")
+            return None
+
+    async def _perform_multi_hop_inference(self):
+        """Traverse particle linkages to build inference chains"""
+        inferences = []
+        
+        try:
+            # Get high-activation particles as starting points
+            particles = self.field.get_all_particles()
+            high_activation = [p for p in particles if hasattr(p, 'activation') and p.activation > 0.6]
+            
+            for start_particle in high_activation[:10]:  # Limit to top 10
+                # Traverse linked particles up to reasoning_depth hops
+                chain = await self._traverse_particle_chain(start_particle, depth=self.reasoning_depth)
+                
+                if len(chain) >= 2:  # Valid inference requires at least 2 hops
+                    inference = {
+                        "chain": [p.id for p in chain],
+                        "confidence": self._calculate_chain_confidence(chain),
+                        "content": " → ".join([str(p.metadata.get("content", ""))[:30] for p in chain]),
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+                    inferences.append(inference)
+            
+            return inferences
+            
+        except Exception as e:
+            self._log_decision(f"Multi-hop inference error: {e}", "ERROR")
+            return []
+
+    async def _traverse_particle_chain(self, start_particle, depth=3, visited=None):
+        """Recursively traverse particle linkages"""
+        if visited is None:
+            visited = set()
+        if depth <= 0 or start_particle.id in visited:
+            return []
+        
+        visited.add(start_particle.id)
+        chain = [start_particle]
+        
+        # Follow children linkages
+        if hasattr(start_particle, 'linked_particles') and 'children' in start_particle.linked_particles:
+            children_ids = start_particle.linked_particles['children']
+            if children_ids:
+                # Pick the highest activation child
+                children = [self.field.get_particle_by_id(cid) for cid in children_ids[:5]]
+                children = [c for c in children if c and c.alive]
+                if children:
+                    best_child = max(children, key=lambda p: p.activation)
+                    child_chain = await self._traverse_particle_chain(best_child, depth - 1, visited.copy())
+                    chain.extend(child_chain)
+        
+        return chain
+
+    def _calculate_chain_confidence(self, chain):
+        """Calculate confidence score for an inference chain"""
+        if not chain:
+            return 0.0
+        
+        # Average activation across chain
+        avg_activation = sum(p.activation for p in chain) / len(chain)
+        
+        # Penalize long chains (uncertainty increases with distance)
+        length_penalty = 1.0 / (1.0 + len(chain) * 0.1)
+        
+        # Position distance variance (more coherent = higher confidence)
+        if len(chain) > 1:
+            positions = [p.position[:3] for p in chain]  # Use x,y,z
+            distances = []
+            for i in range(len(positions) - 1):
+                dist = sum((positions[i][j] - positions[i+1][j])**2 for j in range(3))**0.5
+                distances.append(dist)
+            avg_distance = sum(distances) / len(distances) if distances else 1.0
+            distance_score = 1.0 / (1.0 + avg_distance)
+        else:
+            distance_score = 1.0
+        
+        return avg_activation * length_penalty * distance_score
+
+    async def _detect_knowledge_gaps(self):
+        """Identify sparse regions in particle field (knowledge gaps)"""
+        gaps = []
+        
+        try:
+            particles = self.field.get_alive_particles()
+            if len(particles) < 10:
+                return gaps  # Not enough particles to analyze
+            
+            # Sample particle positions
+            positions = [p.position[:3] for p in particles[:100]]  # Use x,y,z coordinates
+            
+            # Create a simple grid and find empty cells
+            grid_resolution = 5
+            occupied_cells = set()
+            
+            for pos in positions:
+                cell = tuple(int(p * grid_resolution) for p in pos)
+                occupied_cells.add(cell)
+            
+            # Find gaps near occupied cells (adjacent empty cells)
+            for cell in list(occupied_cells)[:20]:  # Check first 20 cells
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        for dz in [-1, 0, 1]:
+                            if dx == dy == dz == 0:
+                                continue
+                            neighbor = (cell[0] + dx, cell[1] + dy, cell[2] + dz)
+                            if neighbor not in occupied_cells:
+                                gaps.append({
+                                    "position": tuple(c / grid_resolution for c in neighbor),
+                                    "nearby_concepts": self._get_nearby_concepts(neighbor, occupied_cells, particles)
+                                })
+            
+            self.knowledge_gaps = gaps[:10]  # Keep top 10 gaps
+            return gaps
+            
+        except Exception as e:
+            self._log_decision(f"Gap detection error: {e}", "ERROR")
+            return []
+
+    def _get_nearby_concepts(self, gap_cell, occupied_cells, particles):
+        """Get concepts near a knowledge gap"""
+        nearby = []
+        for cell in occupied_cells:
+            distance = sum((gap_cell[i] - cell[i])**2 for i in range(3))**0.5
+            if distance < 2.0:  # Close proximity
+                # Find particles in this cell
+                for p in particles:
+                    cell_pos = tuple(int(p.position[i] * 5) for i in range(3))
+                    if cell_pos == cell:
+                        content = p.metadata.get("content", "")
+                        if isinstance(content, str) and content:
+                            nearby.append(content[:50])
+                        break
+        return nearby[:5]
+
+    async def _consolidate_inferences(self, inferences):
+        """Convert validated inferences into permanent memory particles"""
+        consolidated = 0
+        
+        try:
+            for inference in inferences:
+                # Only consolidate high-confidence inferences
+                if inference["confidence"] > 0.6:
+                    # Create memory particle for this inference
+                    memory_particle = await self.field.spawn_particle(
+                        type="memory",
+                        metadata={
+                            "content": f"Inference: {inference['content']}",
+                            "source": "reasoning_coordinator",
+                            "inference_chain": inference["chain"],
+                            "confidence": inference["confidence"],
+                            "timestamp": inference["timestamp"]
+                        },
+                        energy=0.7,
+                        activation=0.6,
+                        source_particle_id=str(self.id),
+                        emit_event=False
+                    )
+                    
+                    if memory_particle:
+                        self.managed_particles.append(memory_particle.id)
+                        consolidated += 1
+            
+            return consolidated
+            
+        except Exception as e:
+            self._log_decision(f"Inference consolidation error: {e}", "ERROR")
+            return 0
+
+    # ==================== KNOWLEDGE CURATOR METHODS ====================
+    
+    async def _handle_knowledge_curation(self, event):
+        """Manage external resource parsing and learning moment integration"""
+        self._log_decision("Starting knowledge curation cycle", "INFO")
+        
+        try:
+            event_data = event.get("data", "")
+            
+            if "learning_moment" in event_data:
+                # Process detected learning moment
+                result = await self._process_learning_moment(event)
+            elif "resource_parsing" in event_data:
+                # Parse external resource
+                result = await self._parse_external_resource(event)
+            elif "knowledge_update" in event_data:
+                # Integrate new knowledge
+                result = await self._integrate_knowledge(event)
+            else:
+                result = None
+            
+            self._update_decision_history(event, result=result)
+            return result
+            
+        except Exception as e:
+            self._log_decision(f"Knowledge curation error: {e}", "ERROR")
+            return None
+
+    async def _process_learning_moment(self, event):
+        """Process a detected learning moment from lingual particles"""
+        try:
+            learning_data = event.get("data", {})
+            token = learning_data.get("token")
+            
+            if not token:
+                self._log_decision("No token in learning moment data", "WARNING")
+                return None
+            
+            # 1. Assess novelty (is this genuinely new knowledge?)
+            novelty_score = await self._assess_learning_novelty(learning_data)
+            
+            # 2. Find related concepts via field proximity
+            related_concepts = await self._find_related_concepts(token)
+            
+            # 3. If significant novelty, integrate into knowledge structures
+            if novelty_score > 0.5:
+                self._log_decision(f"High-novelty learning moment: {token} (score: {novelty_score:.2f})", "INFO")
+                
+                # Create memory particle for this learning moment
+                learning_memory = await self.field.spawn_particle(
+                    type="memory",
+                    metadata={
+                        "content": f"Learned new concept: {token}",
+                        "definition": learning_data.get("definition", ""),
+                        "classification": learning_data.get("classification", {}),
+                        "novelty_score": novelty_score,
+                        "related_concepts": [str(c) for c in related_concepts[:5]],
+                        "source": "knowledge_curator_learning_moment",
+                        "timestamp": datetime.datetime.now().isoformat()
+                    },
+                    energy=0.7 + (novelty_score * 0.3),  # Higher energy for more novel concepts
+                    activation=0.6,
+                    source_particle_id=str(self.id),
+                    emit_event=False
+                )
+                
+                if learning_memory:
+                    self.managed_particles.append(learning_memory.id)
+                    
+                    # Link to source lingual particle if available
+                    source_particle_id = learning_data.get("particle_id")
+                    if source_particle_id:
+                        await self.field.create_interaction_linkage(
+                            learning_memory.id,
+                            source_particle_id,
+                            "learned_from"
+                        )
+                
+                # Track learning moment
+                self.learning_moments.append({
+                    "timestamp": datetime.datetime.now(),
+                    "token": token,
+                    "novelty_score": novelty_score,
+                    "integration_depth": len(related_concepts),
+                    "memory_id": str(learning_memory.id) if learning_memory else None
+                })
+                
+                # Keep history manageable
+                if len(self.learning_moments) > 100:
+                    self.learning_moments = self.learning_moments[-50:]
+                
+                self._update_decision_history(event, result=f"Processed learning: {token}")
+                return learning_memory
+            
+            else:
+                self._log_decision(f"Low-novelty learning moment: {token} (score: {novelty_score:.2f})", "DEBUG")
+                return None
+            
+        except Exception as e:
+            self._log_decision(f"Error processing learning moment: {e}", "ERROR")
+            import traceback
+            self._log_decision(f"Traceback: {traceback.format_exc()}", "ERROR")
+            return None
+
+    async def _assess_learning_novelty(self, learning_data):
+        """Assess how novel/significant this learning moment is"""
+        try:
+            token = learning_data.get("token")
+            
+            # Check if already in lexicon with definitions
+            if self.lexicon_store and self.lexicon_store.has_deep_entry(token):
+                return 0.2  # Low novelty - already well-known
+            
+            # Check classification type (some types are more significant)
+            classification = learning_data.get("classification", {})
+            term_type = classification.get("type", "unknown")
+            
+            type_significance = {
+                "concept": 0.9,
+                "entity": 0.8,
+                "abstract": 0.85,
+                "technical": 0.7,
+                "common": 0.3,
+                "punctuation": 0.0,
+                "stop_word": 0.1
+            }
+            
+            base_novelty = type_significance.get(term_type, 0.5)
+            
+            # Boost novelty if it has multiple sources
+            sources = learning_data.get("sources", {})
+            if isinstance(sources, dict) and len(sources) > 1:
+                base_novelty += 0.1
+            
+            # Boost if context is rich
+            context = learning_data.get("context")
+            if context and len(str(context)) > 50:
+                base_novelty += 0.1
+            
+            return min(base_novelty, 1.0)
+            
+        except Exception as e:
+            self._log_decision(f"Error assessing novelty: {e}", "ERROR")
+            return 0.5  # Default moderate novelty
+
+    async def _find_related_concepts(self, token):
+        """Find particles with semantically related content"""
+        try:
+            related = []
+            
+            # Get all alive particles
+            particles = self.field.get_alive_particles()
+            
+            # Simple keyword matching (could be enhanced with embeddings)
+            token_lower = str(token).lower()
+            
+            for particle in particles[:100]:  # Limit for performance
+                content = particle.metadata.get("content", "")
+                if isinstance(content, str):
+                    content_lower = content.lower()
+                    if token_lower in content_lower or content_lower in token_lower:
+                        related.append(particle.id)
+            
+            return related
+            
+        except Exception as e:
+            self._log_decision(f"Error finding related concepts: {e}", "ERROR")
+            return []
+
+    async def _parse_external_resource(self, event):
+        """Parse external resources (books, articles, datasets) into particles"""
+        # TODO: Implement resource parsing
+        # This will convert external text into semantic particle chains
+        pass
+
+    async def _integrate_knowledge(self, event):
+        """Integrate newly parsed knowledge into existing particle field"""
+        # TODO: Implement knowledge integration
+        # This will merge new particles with existing lexicon and memory
+        pass
+
+    # ==================== HYPOTHESIS GENERATOR METHODS ====================
+    
+    async def _handle_hypothesis_generation(self, event):
+        """Generate and test speculative hypotheses"""
+        self._log_decision("Starting hypothesis generation cycle", "INFO")
+        
+        try:
+            # Generate hypotheses based on knowledge gaps
+            hypotheses = await self._generate_hypotheses()
+            self._log_decision(f"Generated {len(hypotheses)} hypotheses", "DEBUG")
+            
+            # Test hypotheses via field simulation
+            tested = await self._test_hypotheses(hypotheses)
+            self._log_decision(f"Tested {tested} hypotheses", "DEBUG")
+            
+            self._update_decision_history(event, result=f"{len(hypotheses)} generated, {tested} tested")
+            return {"generated": len(hypotheses), "tested": tested}
+            
+        except Exception as e:
+            self._log_decision(f"Hypothesis generation error: {e}", "ERROR")
+            return None
+
+    async def _generate_hypotheses(self):
+        """Generate speculative hypotheses from knowledge gaps"""
+        hypotheses = []
+        
+        try:
+            # Get knowledge gaps from reasoning coordinator
+            reasoning_core = self._get_core_by_role("reasoning_coordinator")
+            if reasoning_core and hasattr(reasoning_core, 'knowledge_gaps'):
+                gaps = reasoning_core.knowledge_gaps[:5]  # Top 5 gaps
+                
+                for gap in gaps:
+                    # Create hypothesis particle for this gap
+                    hypothesis = {
+                        "gap_position": gap["position"],
+                        "nearby_concepts": gap.get("nearby_concepts", []),
+                        "hypothesis_content": f"Possible connection between: {', '.join(gap.get('nearby_concepts', [])[:3])}",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "tested": False
+                    }
+                    hypotheses.append(hypothesis)
+            
+            self.active_hypotheses.extend(hypotheses)
+            return hypotheses
+            
+        except Exception as e:
+            self._log_decision(f"Hypothesis generation error: {e}", "ERROR")
+            return []
+
+    def _get_core_by_role(self, role):
+        """Find another core particle by role"""
+        try:
+            cores = self.field.get_particles_by_type("core")
+            for core in cores:
+                if hasattr(core, 'role') and core.role == role:
+                    return core
+            return None
+        except:
+            return None
+
+    async def _test_hypotheses(self, hypotheses):
+        """Test hypotheses by spawning temporary particles and observing interactions"""
+        tested = 0
+        
+        try:
+            for hypothesis in hypotheses[:3]:  # Test top 3
+                # Spawn temporary particle at gap position
+                test_particle = await self.field.spawn_particle(
+                    type="lingual",
+                    metadata={
+                        "content": hypothesis["hypothesis_content"],
+                        "source": "hypothesis_test",
+                        "hypothesis_id": str(tested),
+                        "temporary": True
+                    },
+                    energy=0.3,
+                    activation=0.4,
+                    source_particle_id=str(self.id),
+                    emit_event=False
+                )
+                
+                if test_particle:
+                    # Override position to gap location
+                    gap_pos = hypothesis["gap_position"]
+                    test_particle.position[0] = gap_pos[0]
+                    test_particle.position[1] = gap_pos[1]
+                    test_particle.position[2] = gap_pos[2]
+                    
+                    # Mark as hypothesis test
+                    hypothesis["tested"] = True
+                    hypothesis["test_particle_id"] = test_particle.id
+                    tested += 1
+            
+            return tested
+            
+        except Exception as e:
+            self._log_decision(f"Hypothesis testing error: {e}", "ERROR")
+            return 0

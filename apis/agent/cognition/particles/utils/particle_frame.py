@@ -558,15 +558,16 @@ class Particle:
 
         # get particle entanglements
         entanglements = []
-        children = self.linked_particles.get("children") #TODO FIXME
+        children = self.linked_particles.get("children") 
         if children is not None:
             if isinstance(children, uuid.UUID):
                 children = [children]
             if isinstance(children, list):
                 children = [child for child in children if isinstance(child, uuid.UUID)]
-            self.linked_particles["children"].extend(children)
+            if children not in self.linked_particles["children"]:    
+                self.linked_particles["children"].append(children)
 
-        for linked_id in self.linked_particles.get("children"):
+        for linked_id in self.linked_particles.get("children", []):
             entanglements.append({
                 'target_id': str(linked_id),
                 "strength": self.calculate_connection_strength(linked_id),
@@ -672,10 +673,10 @@ class Particle:
             metadata=metadata,
             energy=energy,
             activation=activation,
-            source_particle_id=self.id,  # Creates genealogy linkage
+            source_particle_id=str(self.id),  # Creates genealogy linkage
             emit_event=False
         )
-        self.linked_particles["children"].append([particle.id])
+        self.linked_particles["children"].append(particle.id)
         return particle
     
     def calculate_connection_strength(self, linked_id):
