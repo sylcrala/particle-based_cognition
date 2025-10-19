@@ -179,25 +179,25 @@ class LingualParticle(Particle):
             return
         
         if isinstance(token, list): # processes list of tokens for custom_tokenizer usage, otherwise processes normally (str)
-            for t in token:
+            for word in token:
                 if not await self.sync_data():
-                    self.log(f"[Learn] Sync failed; skipping learning for token: {t}", source="LingualParticle", context="learn()")
+                    self.log(f"[Learn] Sync failed; skipping learning for token: {word}", source="LingualParticle", context="learn()")
                     return
                 
                 # Skip if already well-defined
-                if self.lexicon_store.has_deep_entry(token):
-                    self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
+                if self.lexicon_store.has_deep_entry(word):
+                    self.log(f"[Learn] Token already deeply stored: {word}", source="LingualParticle", context="learn()")
                     return
 
                 # Classify and define
-                classified = self.ext_res.classify_term(token)
-                definition, sources = await self.define_term(token, phrase=context)
+                classified = self.ext_res.classify_term(word)
+                definition, sources = await self.define_term(word, phrase=context)
 
-                stored = await self._store_in_memory(token, definition, classified, sources)
+                stored = await self._store_in_memory(word, definition, classified, sources)
 
                 if not stored:
                     await self.lexicon_store.add_term(
-                        token,
+                        word,
                         origin or None,
                         definition or "No definition.",
                         context,
@@ -212,11 +212,11 @@ class LingualParticle(Particle):
 
 
                 source_str = ", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
-                await self.memory_bank.link_token(token, definition, source_str)
+                await self.memory_bank.link_token(word, definition, source_str)
 
                 await self.memory_bank.update(
-                    key = f"learn-{token}-{int(now)}", 
-                    value = f"[Lexical Learn] Learned: '{token}' with classification {classified}",
+                    key = f"learn-{word}-{int(now)}", 
+                    value = f"[Lexical Learn] Learned: '{word}' with classification {classified}",
                     source = "lp_learn",
                     source_particle_id=str(self.id),
                     memory_type="memories",

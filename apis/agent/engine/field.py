@@ -38,6 +38,8 @@ class ParticleField:
         self.restoring_from_state = False
         self._update_active = True
 
+        self.current_metrics = {}
+
         self.particles = []             # all particles in the field
         self.alive_particles = set()    # alive/dead filtering
         self.particle_index = {}        # spatial partitioning for neighbor queries
@@ -351,11 +353,10 @@ class ParticleField:
             # get sys metrics from sensory particles or direct API
             
 
-            sensory_particle = await self.event_handler.emit_event("system_events", "system_metrics request", source="_calculate_adaptive_pruning_rate")
-            metrics = sensory_particle.environmental_state.get("current_state") if sensory_particle else None
+            metrics = self.current_metrics
             if not metrics or metrics is None: 
                 self.log("No system metrics available for adaptive pruning rate calculation", "WARNING", "_calculate_adaptive_pruning_rate")
-                return 0.05  # default pruning rate
+                return 0.1  # default pruning rate
             
             try:
                 cpu_usage = metrics["cpu_usage"] / 100.0 # convert to 0-1 scale
@@ -363,7 +364,7 @@ class ParticleField:
                 particle_count = len(self.alive_particles)
             except Exception as null_metrics:
                 self.log(f"Error extracting metrics values: {null_metrics}", "ERROR", "_calculate_adaptive_pruning_rate")
-                return 0.05  # default pruning rate
+                return 0.1  # default pruning rate
             if cpu_usage > 0.6 and particle_count >= 1000:
                 prune_rate = 0.30 # aggressive pruning, 30%
                 reason = f"HIGH_LOAD (CPU: {cpu_usage*100:.1f}%, Particles: {particle_count})"

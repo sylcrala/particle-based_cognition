@@ -165,7 +165,7 @@ class LexiconStore:
             self.logger.log(f"Add term traceback: {traceback.format_exc()}", "ERROR", "add_term")
             return None
 
-    def has_deep_entry(self, token):
+    def has_deep_entry(self, token: str):
         """Check if lexicon has a deep entry for the token"""
         try:
             if token in self.lexicon:

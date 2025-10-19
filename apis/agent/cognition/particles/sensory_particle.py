@@ -39,6 +39,7 @@ class SensoryParticle(Particle):
             state = self.metrics.get_current_metrics()
 
             self.environmental_state["current_state"] = state
+            self.field.current_metrics = state
             self.environmental_state["timestamp"] = current_time
 
 

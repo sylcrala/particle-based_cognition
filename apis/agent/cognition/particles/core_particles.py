@@ -383,18 +383,15 @@ class CoreParticle(Particle):
                     self.log("Processing Wikipedia learning reflection...", context="process_reflection_queue")
                     wikipedia = api.get_api("wikipedia_searcher")
                     
-                    # Choose category based on recent particle activity
-                    categories = ["science", "philosophy", "language", "psychology", "technology", "arts", "history"]
-                    chosen_category = random.choice(categories)
-                    
                     # Fetch random article from category
-                    article = await wikipedia.random_article_by_category(chosen_category)
+                    article = await wikipedia.random_article_by_category(None)
                     
                     if article and "error" not in article:
                         # Create memory particle from article content
                         article_title = article.get("title", "Unknown")
                         article_summary = article.get("content", "")[:500]  # First 500 chars
                         article_url = article.get("url", "")
+                        article_categories = article.get("categories", "general")
                         
                         self.log(f"Learning from Wikipedia: {article_title}", "INFO", "process_reflection_queue")
                         
@@ -406,7 +403,7 @@ class CoreParticle(Particle):
                                 "source": "wikipedia_reflection",
                                 "article_title": article_title,
                                 "article_url": article_url,
-                                "category": chosen_category,
+                                "categories": article_categories,
                                 "timestamp": datetime.datetime.now().isoformat()
                             },
                             energy=0.7,
