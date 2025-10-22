@@ -1,16 +1,47 @@
-import asyncio
 import os
-import signal
 import sys
+# environment and app setup methods
+def setup_opengl_env():
+    """Set up OpenGL environment variables for compatibility"""
+    # Force OpenGL version compatibility
+    #os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
+    #os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
+
+    # force software rendering if hardware fails
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "0"
+
+    # qt opengl settings
+    #os.environ["QT_OPENGL"] = "desktop"  # alternatives: "angle", "software"
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+def setup_vispy_backend():
+    """Setup VisPy with fallback backends"""
+    backend_options = ["pyqt6", "qt", "glfw", "tkinter"]
+
+    for backend in backend_options:
+        try:
+            app.use_app(backend)
+            print(f"VisPy using backend: {backend}")
+            return True
+        except Exception as e:
+            print(f"VisPy backend {backend} failed: {e}")
+            continue
+
+    raise RuntimeError("No compatible VisPy backend found.")
+
+setup_opengl_env()
+
+# finishing imports after applying opengl compat fixes
 import time
 import math
 import numpy as np
 from PyQt6 import QtWidgets, QtCore, QtGui
 from vispy import app
-app.use_app("pyqt6")
+setup_vispy_backend()
 from vispy import scene
 from vispy.scene.visuals import Text, XYZAxis, Line, Markers
 from pathlib import Path
+import asyncio
 import threading
 import colorsys
 from math import sin
@@ -952,6 +983,18 @@ class MainWindow(QtWidgets.QMainWindow):
         scrollbar = self.log_display.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
+def initialize_agent_safe(main_window=None):
+    """Thread-safe agent initialization"""
+    try:
+        if QtCore.QCoreApplication.instance(): # checks that we're in the same Qt instance/thread
+            QtCore.QCoreApplication.processEvents()
+        return initialize_agent(main_window)
+
+    except Exception as e:
+        log_to_console(f"Error in thread-safe agent initialization: {str(e)}", "ERROR", "initialization")
+        if main_window:
+            main_window.add_to_log(f"Error in thread-safe agent initialization: {str(e)}", "ERROR")
+        return None
 
 def initialize_agent(main_window=None):
     """Initialize the agent system"""
@@ -1032,7 +1075,7 @@ def main():
 
         # Initialize agent after GUI launches (in a separate thread)
         agent_thread = threading.Thread(
-            target=lambda: initialize_agent(main_window),
+            target=lambda: initialize_agent_safe(main_window),
             daemon=True
         )
         agent_thread.start()

@@ -35,12 +35,12 @@ def log_to_console(message, level="INFO", context = None):
 async def main():
     """Main orchestrator for cognitive system + TUI"""
 
-    print("Starting Persistence Toolkit, all systems initializing...")
+    print("Starting the Particle-based Cognition Engine, all systems initializing...")
     print("=" * 60)
     print("This terminal is dedicated for the cognition framework and system logs.")
     print("Please do not close this terminal to ensure proper operation.")
     try:
-            log_to_console("Launching Agent Core", "WARNING", "main()")
+            log_to_console("Launching Cognition Engine Agent Core", "WARNING", "main()")
 
             from apis.agent.core import AgentCore
             agent_core = AgentCore()
@@ -51,7 +51,7 @@ async def main():
             # Start agent in background task
             await agent_core.run()
 
-            log_to_console("Misty's consciousness initialized successfully", "INFO", "main()")
+            log_to_console("Cognition Engine Agent core initialized successfully", "INFO", "main()")
 
 
     except Exception as e:
