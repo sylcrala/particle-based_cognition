@@ -80,6 +80,10 @@ class Particle:
         self.extra_params = kwargs
         self.creation_index = self.position[3]
         self.vitality = 0.0
+
+        if self.alive == False:
+            self.energy = 0.0
+            self.activation = 0.0
         
 
 
