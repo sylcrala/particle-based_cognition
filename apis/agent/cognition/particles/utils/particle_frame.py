@@ -512,10 +512,72 @@ class Particle:
             return False
         shimmer_rate = (1 - certainty) * 5  # More uncertain = faster shimmer
         return (current_time * shimmer_rate) % 1 < 0.5
+    
+    def render(self):
+        """Renders the particle in 3D space in accordance to each particles first three dimensional positions: x, y, z respectively. Other properties for visualization are derived from the particles other properties or dimensional positions."""
+        current_time = dt.datetime.now().timestamp()
+
+        pos_3d = [
+            self.position[0],
+            self.position[1],
+            self.position[2]
+        ]
+        
+        # calculating age
+        age = current_time - self.position[3]
+
+        # emotional dimensions
+        freq = self.position[6]
+        valence = self.position[8]
+        vitality = self.vitality
+
+        # pseudo-quantum state
+        certainty = self.superposition['certain']
+
+        # get particle entanglements
+        entanglements = []
+        children = self.linked_particles.get("children") 
+        if children is not None:
+            if isinstance(children, uuid.UUID):
+                children = [children]
+            if isinstance(children, list):
+                children = [child for child in children if isinstance(child, uuid.UUID)]
+            if children not in self.linked_particles["children"]:    
+                self.linked_particles["children"].append(children)
+
+        for linked_id in self.linked_particles.get("children", []):
+            entanglements.append({
+                'target_id': str(linked_id),
+                "strength": self.calculate_connection_strength(linked_id),
+                "type": 'parent_child'
+            })
+
+
+
+        return {                # this needs deeper review - come back to it after test run for vitality-based pulse rate and type-based hue
+            'id': str(self.id),
+            'type': self.type,                                      # Include particle type for visualization
+            'position': pos_3d,
+            'size': self.age_to_size(age),
+            'pulse_rate': abs(vitality) if vitality is not None else 1.0,                            # changed from abs(freq) to abs(vitality), ran into a NoneType issue, 
+            'color_hue': self.type_to_hue(),                        # Hue based on particle type 
+            'color_saturation': abs(freq),                          # Saturation based on frequency - i need to check this against the range of frequency values we're now seeing (in comparison to what frequency formerly was - now we need to confirm this mapping works for both negative and positive freq values)
+            'entanglements': entanglements,
+            'glow': valence,
+            'glow_intensity': abs(valence),
+            'glow_polarity': 1 if valence >= 0 else -1,
+            'quantum_state': {
+                'opacity': certainty,
+                'animation': self.should_shimmer(certainty, current_time) and 'shimmer' or 'steady',
+                'ghost_trails': certainty < 0.5,
+                'collapse_indicator': self.collapsed_state is not None
+            }
+        }
+    
 
     def render_particle(self, dim_mapping = None, normalize = True):
         """
-        Render the particle for 3D visualization of any given set of the 12 dimensions
+        Render the particle for 3D visualization of any given set of the 12 dimensions - used for flexible mapping in the particle field viewer
 
         Args:
             dim_mapping: Dict specifying which dimensions to use for x,y,z axes
@@ -617,6 +679,7 @@ class Particle:
         }
 
     def _get_normalized_dimension(self, dim_index, normalize = True):
+        """Retrieve and optionally normalize a specific dimension value - DEPRECATED"""
         value = self.position[dim_index] if dim_index < len(self.position) else 0
         current_time = dt.datetime.now().timestamp()
 

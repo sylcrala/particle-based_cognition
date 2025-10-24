@@ -580,7 +580,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.field = self.get_field_api()
         
         # Set up the UI
-        self.setWindowTitle("Local Kit - Quantum Particle System")
+        self.setWindowTitle("Quantum Particle System")
         self.resize(1280, 800)
         
         # Create main widget and layout
