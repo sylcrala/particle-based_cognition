@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 from PyQt6.QtGui import QPalette
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from vispy import app
 app.use_app('pyqt6')
 from vispy import scene
@@ -41,13 +41,12 @@ import math
 import threading
 
 
-
-
 class VisualizerTab(QWidget):
     """The dedicated visualizer tab class - holds the vispy canvas (which handles 3D rendering and controls + legend/information)"""
     def __init__(self):
         super().__init__()
         self.logger = api.get_api("logger")
+        
 
         # set layout
         self.layout = QVBoxLayout()
@@ -83,6 +82,7 @@ class VisualizerCanvas(scene.SceneCanvas):
     """The vispy canvas holding 3D field visualization, controls, and information overlays"""
     def __init__(self):
         self.logger = api.get_api("logger")
+        self.visualizer_enabled = False # flag to enblae the visualizer - default is False to prevent ghost API calls, must be enabled in app via a button or toggle
 
         scene.SceneCanvas.__init__(self, keys="interactive")
         self.unfreeze()
@@ -104,7 +104,7 @@ class VisualizerCanvas(scene.SceneCanvas):
         self.view.camera.fov = 45
         self.view.camera.distance = 5
 
-        # create 3D grid
+        # create 3D rendering axis
         self.axis = XYZAxis(parent = self.view.scene) # 3D XYZ axis
         self.grid_lines = GridLines(
             parent=self.view.scene,
@@ -114,6 +114,9 @@ class VisualizerCanvas(scene.SceneCanvas):
 
         # particle setup - dependent on agent being ready
         particle_types = ["memory", "lingual", "sensory", "core"]
+
+        self.position_history = {}
+        self.trail_length = 10
 
         self.particle_visuals = {}
         self.shimmer_visuals = {}
