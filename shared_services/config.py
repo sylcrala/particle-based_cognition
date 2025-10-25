@@ -8,6 +8,12 @@ class Config():
     def __init__(self):
         self.system_language = "en"
 
+        # os-specific settings
+        #TODO: add support for OS detection and autofill
+        self.os_name = "linux"
+        self.os_version = "fedora-42"
+        self.wayland_active = True
+
         self.user_name = "Tony"
         
         self.agent_mode = "cog-growth"   # options: llm-extension (uses LLM for supplementing voice module, linguistic capabilities and knowledge base), cog-growth (no LLM for voice module - agent "grows" its own linguistic capabilities and knowledge base over time)

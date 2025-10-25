@@ -9,6 +9,7 @@ import concurrent
 import traceback
 from apis.api_registry import api
 from apis.agent.event_handler import EventHandler
+import threading
 
 events = None
 
@@ -175,6 +176,7 @@ class AgentCore:
         self.log(f"System Startup Final Report: \n\nRegistered APIs: \n{api.list_apis()}", "INFO", "initialize()")
 
         self._running = True
+
 
 
     async def run(self):
@@ -913,3 +915,7 @@ class PriorityEventQueue:
     def qsize(self):
         """Get queue size"""
         return len(self._queue)
+
+
+
+api.register_api("agent", AgentCore())

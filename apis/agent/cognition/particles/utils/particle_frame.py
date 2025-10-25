@@ -513,15 +513,11 @@ class Particle:
         shimmer_rate = (1 - certainty) * 5  # More uncertain = faster shimmer
         return (current_time * shimmer_rate) % 1 < 0.5
     
-    def render(self):
+    async def render(self):
         """Renders the particle in 3D space in accordance to each particles first three dimensional positions: x, y, z respectively. Other properties for visualization are derived from the particles other properties or dimensional positions."""
         current_time = dt.datetime.now().timestamp()
 
-        pos_3d = [
-            self.position[0],
-            self.position[1],
-            self.position[2]
-        ]
+        pos_3d = self.position[:3].astype(np.float32)
         
         # calculating age
         age = current_time - self.position[3]
@@ -554,23 +550,23 @@ class Particle:
 
 
 
-        return {                # this needs deeper review - come back to it after test run for vitality-based pulse rate and type-based hue
+        return {              
             'id': str(self.id),
-            'type': self.type,                                      # Include particle type for visualization
-            'position': pos_3d,
-            'size': self.age_to_size(age),
-            'pulse_rate': abs(vitality) if vitality is not None else 1.0,                            # changed from abs(freq) to abs(vitality), ran into a NoneType issue, 
-            'color_hue': self.type_to_hue(),                        # Hue based on particle type 
-            'color_saturation': abs(freq),                          # Saturation based on frequency - i need to check this against the range of frequency values we're now seeing (in comparison to what frequency formerly was - now we need to confirm this mapping works for both negative and positive freq values)
+            'type': self.type,                                      
+            'position': pos_3d,     
+            'size': np.float32(self.age_to_size(age)),
+            'pulse_rate': np.float32(abs(vitality) if vitality is not None else 1.0),                             
+            'color_hue': np.float32(self.type_to_hue()),                        
+            'color_saturation': np.float32(abs(freq)),                          
             'entanglements': entanglements,
-            'glow': valence,
-            'glow_intensity': abs(valence),
-            'glow_polarity': 1 if valence >= 0 else -1,
+            'glow': np.float32(valence),
+            'glow_intensity': np.float32(abs(valence)),
+            'glow_polarity': np.int8(1 if valence >= 0 else -1),
             'quantum_state': {
-                'opacity': certainty,
+                'opacity': np.float32(certainty),
                 'animation': self.should_shimmer(certainty, current_time) and 'shimmer' or 'steady',
-                'ghost_trails': certainty < 0.5,
-                'collapse_indicator': self.collapsed_state is not None
+                'ghost_trails': bool(certainty < 0.5),
+                'collapse_indicator': bool(self.collapsed_state is not None)
             }
         }
     
