@@ -43,8 +43,11 @@ def initialize_agent_safe():
         
         if agent_core:
             print("Starting agent async loop...")
-            # Run the async agent in its own event loop
-            asyncio.run(agent_core.run())
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            loop.run_until_complete(agent_core.run())
+            print("Agent async loop started.")
         else:
             print("ERROR: Agent core not found in API registry")
             
@@ -54,27 +57,41 @@ def initialize_agent_safe():
         traceback.print_exc()
 
 
+
 if __name__ == "__main__":
     config = api.get_api("config")
+    agent_core = api.get_api("agent")
     
     if config.wayland_active:
         print("Wayland detected, applying compatibility fixes")
         # Setup X11 environment for better OpenGL support
         setup_x11_environment()
 
-    # Create Qt application
-    app = QApplication(sys.argv)
+    try:
+        # Create Qt application
+        app = QApplication(sys.argv)
+        window = MainWindow()
+        window.show()
+
+        app.processEvents() # ensure gui shows prior to cog framework startup
+
+        # Start agent in separate thread after GUI is ready
+        agent_thread = threading.Thread(
+            target=initialize_agent_safe, 
+            daemon=True
+        )
+        agent_thread.start()
+
+        # Run Qt event loop
+        sys.exit(app.exec())
     
-    # Create and show main window
-    window = MainWindow()
-    window.run()
+    except KeyboardInterrupt as e:
+        print("Shutting down application...")
+        api.handle_shutdown()
+        sys.exit(0)
     
-    # Start agent in separate thread after GUI is ready
-    agent_thread = threading.Thread(
-        target=initialize_agent_safe,
-        daemon=True
-    )
-    agent_thread.start()
-    
-    # Run Qt event loop
-    sys.exit(app.exec())
+    except Exception as e:
+        print(f"Fatal error in main application: {str(e)}")
+        import traceback
+        print(f"Full traceback:\n{traceback.print_exc()}")
+        sys.exit(1)

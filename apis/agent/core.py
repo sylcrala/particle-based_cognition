@@ -123,6 +123,7 @@ class AgentCore:
         self.log("Module threading complete", context="AgentCore.__init__")
 
         self._running = False
+        self._event_loop = None
         self.log("Agent Core initialization complete", context="AgentCore.__init__")
 
         
@@ -176,6 +177,7 @@ class AgentCore:
         self.log(f"System Startup Final Report: \n\nRegistered APIs: \n{api.list_apis()}", "INFO", "initialize()")
 
         self._running = True
+        self._event_loop = self.agent_anchor._agent_loop
 
 
 
@@ -187,6 +189,7 @@ class AgentCore:
             await self.initialize()
             #await self.memory_bank.verify_memory_system_health()               # **DEBUG** for testing DB health in the case of issues
             
+
             # Restoring previous state
             try:
                 await api.handle_startup_restoration()
@@ -219,6 +222,9 @@ class AgentCore:
             self.log("Starting cognitive loops...", context="run")
             self.cognition_loop.conscious_active = True
             self.particle_field._update_active = True
+
+            visualizer = api.get_api("visualizer")
+            visualizer.agent_ready = True
             
             # Main loop that keeps restarting tasks if they complete
             while self._running:
@@ -282,14 +288,14 @@ class AgentCore:
             self.log("Received shutdown signal", context="run")
             self._running = False
             self.cognition_loop.conscious_active = False
-            await self.cognition_loop.shutdown_sequence()
+            await api.handle_shutdown()
 
         except Exception as e:
             self.log(f"Runtime error: {e}", level="ERROR", context="run")
             self.log(f"Full traceback: {traceback.format_exc()}", level="ERROR", context="run")
             self._running = False
             self.cognition_loop.conscious_active = False
-            await self.cognition_loop.shutdown_sequence()
+            await api.handle_shutdown()
 
 
     def shutdown(self):
@@ -303,6 +309,11 @@ class AgentCore:
             if not task.done():
                 task.cancel()
 
+    def save(self):
+        """Externally-callable method to save the agent state"""
+        self.log("External save requested", context="save")
+        asyncio.run(api.handle_manual_state_save())
+        
 
 
 class AgentAnchor:
@@ -489,7 +500,7 @@ class AgentAnchor:
         priority_map = {
             "user_input": 2,
             "shutdown": 0,
-            "particle_created": 2,
+            "particle_created": 5,
             "system_idle": 7,
             "system_events": 1,
             "cognitive_event": 3,
@@ -497,7 +508,7 @@ class AgentAnchor:
             "reflection_request": 6, # external request for reflection
             "memory_event": 3,
             "reasoning_cycle": 2,
-            "learning_moment_detected": 3
+            "learning_moment_detected": 4
         }
         
         base_priority = priority_map.get(event_type, 5)

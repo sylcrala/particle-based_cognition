@@ -61,14 +61,14 @@ class MainWindow(QMainWindow):
         self.tabbar_layout = QHBoxLayout() # small tab bar at the top for nav
         self.tabbar.setLayout(self.tabbar_layout)
         self.main_widget = QStackedWidget() # main widget container
-        #self.main_widget_layout = QStackedLayout() # main stacked layout to switch between different pages
-        #self.main_widget.setLayout(self.main_widget_layout)
 
         self.base_layout.addWidget(self.tabbar) # adding to base layout
         self.base_layout.addWidget(self.main_widget) # adding to base layout
 
         # set up tabs for stacked layout - tab index listed next to each
         from gui.utils.visualizer import VisualizerTab
+        from gui.utils.chat import ChatTab
+        from gui.utils.config import ConfigTab
         self.diagnostics_tab = QWidget() #0
         self.main_widget.addWidget(self.diagnostics_tab)
         self.analytics_tab = QWidget() #1
@@ -77,11 +77,11 @@ class MainWindow(QMainWindow):
         self.main_widget.addWidget(self.memory_tab)
         self.visualizer_tab = VisualizerTab() #3
         self.main_widget.addWidget(self.visualizer_tab)
-        self.chat_tab = QWidget() #4
+        self.chat_tab = ChatTab() #4
         self.main_widget.addWidget(self.chat_tab)
         self.logs_tab = QWidget() #5
         self.main_widget.addWidget(self.logs_tab)
-        self.config_tab = QWidget() #6
+        self.config_tab = ConfigTab() #6
         self.main_widget.addWidget(self.config_tab)
 
         self.main_widget.setCurrentIndex(3) # default to visualization tab at launch

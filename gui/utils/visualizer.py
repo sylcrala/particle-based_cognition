@@ -1,6 +1,7 @@
 import os
 import sys
 from apis.api_registry import api
+import colorsys
 
 # Set up OpenGL environment for Fedora 42 compatibility
 def setup_opengl_env():
@@ -26,7 +27,7 @@ if config.wayland_active:
 
 from PyQt6.QtWidgets import (
     QWidget, 
-    QVBoxLayout,
+    QStackedLayout,
 )
 from PyQt6.QtGui import QPalette
 from PyQt6.QtCore import Qt, QTimer
@@ -39,6 +40,7 @@ import asyncio
 import numpy as np
 import math
 import threading
+import datetime as dt
 
 
 class VisualizerTab(QWidget):
@@ -47,20 +49,19 @@ class VisualizerTab(QWidget):
         super().__init__()
         self.logger = api.get_api("logger")
         
-
         # set layout
-        self.layout = QVBoxLayout()
+        self.layout = QStackedLayout()
         self.setLayout(self.layout)
         
+        """
         # set palette
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.cyan)
         self.setPalette(palette)
         self.setAutoFillBackground(True) 
-
+        """
         # set up vispy canvas
         self.visualizer_canvas = VisualizerCanvas()
-        
         # Add canvas to layout
         self.layout.addWidget(self.visualizer_canvas.native)
 
@@ -82,35 +83,26 @@ class VisualizerCanvas(scene.SceneCanvas):
     """The vispy canvas holding 3D field visualization, controls, and information overlays"""
     def __init__(self):
         self.logger = api.get_api("logger")
-        self.visualizer_enabled = False # flag to enblae the visualizer - default is False to prevent ghost API calls, must be enabled in app via a button or toggle
-
-        scene.SceneCanvas.__init__(self, keys="interactive")
-        self.unfreeze()
+        self.visualizer_enabled = True # flag to enable the visualizer - default is False to prevent ghost API calls, must be enabled in app via a button or toggle
         self.agent_ready = False
+        scene.SceneCanvas.__init__(self, keys="interactive", bgcolor="white") #bgcolor=(0.01, 0.01, 0.03, 1.0)
+        self.unfreeze()
 
-        try:
-            self.particle_source = api.get_api("_agent_field")
-            if self.particle_source:
-                self.log("Particle field API connected successfully", "INFO", "__init__()")
-            else:
-                self.log("Particle field API not yet available - will retry during updates", "WARNING", "__init__()")
-        except Exception as field_not_found:
-            self.log(f"Particle source API '_agent_field' not found - cannot populate visualizer canvas | Error: {field_not_found}", "ERROR", "__init__()")
-            self.particle_source = None
+        self.particle_source = None
 
         # camera setup
         self.view = self.central_widget.add_view()
-        self.view.camera = "turntable" # or "fly"
+        self.view.camera = "fly"
         self.view.camera.fov = 45
-        self.view.camera.distance = 5
+        self.view.camera.distance = 20
+        self.view.camera.center = (0, 0, 0)
 
-        # create 3D rendering axis
-        self.axis = XYZAxis(parent = self.view.scene) # 3D XYZ axis
-        self.grid_lines = GridLines(
-            parent=self.view.scene,
-            scale=(1, 1, 1),
-            color=(0.2, 0.2, 0.2, 0.3)
-        )
+        self.view.camera.pan_sensitivity = 0.5
+        self.view.camera.zoom_sensitivity = 0.8
+
+        self.camera = self.view.camera
+
+        self.setup_camera_controls()
 
         # particle setup - dependent on agent being ready
         particle_types = ["memory", "lingual", "sensory", "core"]
@@ -118,114 +110,50 @@ class VisualizerCanvas(scene.SceneCanvas):
         self.position_history = {}
         self.trail_length = 10
 
-        self.particle_visuals = {}
+        self.interactive_particles = {}
         self.shimmer_visuals = {}
         self.trail_visuals = {}
         
         self.show_entanglements = True
-        self.show_trails = True
+        self.show_trails = False
         self.show_shimmer = True
         self.show_spatial_grid = True
 
+        # create 3D rendering axis
+        self.axis = XYZAxis(parent = self.view.scene) # 3D XYZ axis
+        if self.show_spatial_grid:
+            self.setup_gridlines()
+        else:
+            self.grid_lines = None
 
-        # 3d overlay controls
-        # TODO
+        # help text box
+        self.help_overlay = Text(
+            """ 
+Controls:                           |   "R" to reset camera
+WASD for movement                   |   "F" to focus on particles center
+Mouse to pan camera                 |   "H" to toggle help overlay
+Left click particles for details    |   "G" to toggle spatial grid
+Escape to close particle details    |   "P" to save agent state
+                                        
 
-        self.events.mouse_press.connect(self.on_mouse_press)
-        self.particle_metadata = {"memory": [], "lingual": [], "sensory": [], "core": [], "unknown": []}
-        
-        #if self.particle_source != None:
-        try:
-            # particle visual foundations with compatibility settings
-            for p_type in particle_types:
-                try:
-                    # Initialize Markers for particles
-                    self.particle_visuals[p_type] = Markers(
-                        parent=self.view.scene,
-                        antialias=False  # Disable antialiasing for compatibility
-                    )
-                    
-                    # Disable Line visuals for now due to shader compatibility issues
-                    self.shimmer_visuals[p_type] = None
-                    self.trail_visuals[p_type] = None
-
-                    # Set minimal initial data
-                    self.particle_visuals[p_type].set_data(
-                        pos=np.array([[0, 0, 0]], dtype=np.float32),
-                        size=np.array([0.001], dtype=np.float32),
-                        face_color=np.array([[0, 0, 0, 0]], dtype=np.float32)
-                    )
-
-                    # Don't set data for Line visuals initially to avoid shader issues
-                    # They will be populated when particles are actually rendered
-                    
-                    self.log(f"Initialized visuals for particle type: {p_type}", "DEBUG", "__init__")
-                    
-                except Exception as visual_error:
-                    self.log(f"Error initializing visuals for {p_type}: {visual_error}", "WARNING", "__init__")
-                    # Create placeholder None values for failed visuals
-                    self.particle_visuals[p_type] = None
-                    self.shimmer_visuals[p_type] = None
-                    self.trail_visuals[p_type] = None
-        except Exception as e:
-            self.log(f"Error setting up particle visuals: {e}", "ERROR", "__init__()")
-
-            # Disable connection lines for now due to shader compatibility issues
-            self.connection_lines = None
-
-        # Start update timer in separate thread for async operations
-        self.update_thread = threading.Thread(
-            target=self.run_update_loop,
-            daemon=True
+""",
+            pos=(10, 30),
+            font_size=10,
+            color=(0.7, 0.7, 0.7, 0.8),
+            parent=self.view,
+            anchor_x='left',
+            anchor_y='bottom'
         )
-        self.update_thread.start()
 
+        self.detail_overlay = None
 
-    def create_manual_grid(self):
-        """Create a manual grid as fallback for GridLines compatibility issues"""
-        try:
-            # Create grid points manually
-            grid_range = 2.0
-            grid_step = 0.2
-            grid_points = []
-            
-            # Create grid lines in X direction
-            for y in np.arange(-grid_range, grid_range + grid_step, grid_step):
-                for z in np.arange(-grid_range, grid_range + grid_step, grid_step):
-                    grid_points.extend([
-                        [-grid_range, y, z],
-                        [grid_range, y, z]
-                    ])
-            
-            # Create grid lines in Y direction  
-            for x in np.arange(-grid_range, grid_range + grid_step, grid_step):
-                for z in np.arange(-grid_range, grid_range + grid_step, grid_step):
-                    grid_points.extend([
-                        [x, -grid_range, z],
-                        [x, grid_range, z]
-                    ])
-                    
-            # Create grid lines in Z direction
-            for x in np.arange(-grid_range, grid_range + grid_step, grid_step):
-                for y in np.arange(-grid_range, grid_range + grid_step, grid_step):
-                    grid_points.extend([
-                        [x, y, -grid_range],
-                        [x, y, grid_range]
-                    ])
-            
-            if grid_points:
-                manual_grid = Line(
-                    pos=np.array(grid_points, dtype=np.float32),
-                    color=(0.2, 0.2, 0.2, 0.3),
-                    connect='segments',
-                    parent=self.view.scene,
-                    antialias=False  # Disable antialiasing to reduce shader complexity
-                )
-                return manual_grid
-                
-        except Exception as manual_error:
-            self.log(f"Manual grid creation also failed: {manual_error}", "ERROR", "__init__")
-            return None
+        self.events.mouse_press.connect(self.on_canvas_click)
+        self.particle_metadata = {"memory": [], "lingual": [], "sensory": [], "core": [], "unknown": []}
+
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_particles)
+        self.update_timer.start(50)  # 20 FPS
+
 
     def log(self, message, level="INFO", context = None):
         """Send log messages to system logger"""
@@ -238,267 +166,500 @@ class VisualizerCanvas(scene.SceneCanvas):
         if self.logger:
             self.logger.log(message, level, context=context, source="VisualizerCanvas")
 
-
-    def run_update_loop(self):
-        """Run the async update loop in a separate thread"""
+    #*# -- GRIDLINES -- #*#
+    def setup_gridlines(self):
+        """Create cube boundary gridlines for spatial reference"""
         try:
-            self.log("Starting visualizer update loop...", "INFO", "run_update_loop")
-            asyncio.run(self.start_update_timer())
+            bounds = {
+                'x': (-5.0, 5.0),
+                'y': (-5.0, 5.0), 
+                'z': (-5.0, 5.0)
+            }
+            
+            x_min, x_max = bounds['x']
+            y_min, y_max = bounds['y'] 
+            z_min, z_max = bounds['z']
+
+            lines = []
+            colors = []
+
+            # Main cube edges (bright)
+            cube_edges = [
+                # Bottom face
+                [x_min, y_min, z_min], [x_max, y_min, z_min],
+                [x_max, y_min, z_min], [x_max, y_max, z_min], 
+                [x_max, y_max, z_min], [x_min, y_max, z_min],
+                [x_min, y_max, z_min], [x_min, y_min, z_min],
+                # Top face
+                [x_min, y_min, z_max], [x_max, y_min, z_max],
+                [x_max, y_min, z_max], [x_max, y_max, z_max],
+                [x_max, y_max, z_max], [x_min, y_max, z_max], 
+                [x_min, y_max, z_max], [x_min, y_min, z_max],
+                # Vertical edges
+                [x_min, y_min, z_min], [x_min, y_min, z_max],
+                [x_max, y_min, z_min], [x_max, y_min, z_max],
+                [x_max, y_max, z_min], [x_max, y_max, z_max],
+                [x_min, y_max, z_min], [x_min, y_max, z_max],
+            ]
+            
+            cube_colors = [[0.9, 0.9, 0.9, 0.8]] * len(cube_edges)
+            
+            # Add a few reference grid lines (just center lines on each face)
+            center_x = (x_min + x_max) / 2
+            center_y = (y_min + y_max) / 2  
+            center_z = (z_min + z_max) / 2
+            
+            reference_lines = [
+                # Center horizontal line on front/back faces
+                [x_min, center_y, z_min], [x_max, center_y, z_min],
+                [x_min, center_y, z_max], [x_max, center_y, z_max],
+                # Center vertical line on front/back faces  
+                [center_x, y_min, z_min], [center_x, y_max, z_min],
+                [center_x, y_min, z_max], [center_x, y_max, z_max],
+            ]
+            
+            reference_colors = [[0.5, 0.5, 0.5, 0.4]] * len(reference_lines)
+
+            lines.extend(cube_edges)
+            lines.extend(reference_lines)
+            colors.extend(cube_colors)
+            colors.extend(reference_colors)
+
+            # Create visual
+            lines = np.array(lines, dtype=np.float32)
+            colors = np.array(colors, dtype=np.float32)
+
+            self.grid_lines = Line(
+                parent=self.view.scene,
+                antialias=True
+            )
+            
+            self.grid_lines.set_data(
+                pos=lines,
+                color=colors,
+                connect='segments'
+            )
+            
+            self.log("Simple boundary cube created", "DEBUG", "_create_simple_boundary_cube")
+            
         except Exception as e:
-            self.log(f"Update loop error: {e}", "ERROR", "run_update_loop")
-            import traceback
-            traceback.print_exc()
+            self.log(f"Simple cube creation error: {e}", "ERROR", "_create_simple_boundary_cube")
+            self.grid_lines = None
 
-    async def start_update_timer(self):
-        """Starts the visualizer update timer"""
-        # Wait a bit for agent to initialize
-        self.log("Waiting for agent initialization...", "INFO", "start_update_timer")
-        await asyncio.sleep(3.0)
-        
-        # Try to reconnect to particle source if not available
-        if not self.particle_source:
-            try:
-                self.particle_source = api.get_api("_agent_field")
-                if self.particle_source:
-                    self.log("Particle field API connected after retry", "INFO", "start_update_timer")
-            except Exception as e:
-                self.log(f"Failed to connect to particle field: {e}", "WARNING", "start_update_timer")
-        
-        update_count = 0
-        while True:  # Keep running even if particle source not available yet
-            try:
-                if self.particle_source:
-                    await self.update_particles()
-                    if update_count % 100 == 0:  # Log every 5 seconds (100 * 0.05s)
-                        self.log(f"Visualizer update #{update_count}", "DEBUG", "start_update_timer")
-                else:
-                    # Try to reconnect periodically
-                    if update_count % 20 == 0:  # Every second
-                        try:
-                            self.particle_source = api.get_api("_agent_field")
-                            if self.particle_source:
-                                self.log("Particle field API connected", "INFO", "start_update_timer")
-                        except:
-                            pass
-                            
-                update_count += 1
-                await asyncio.sleep(0.05)
-                
-            except Exception as e:
-                self.log(f"Visualization update error: {e}", "ERROR", "start_update_timer()")
-                await asyncio.sleep(1.0)
+    def toggle_spatial_grid(self):
+        """Toggle the spatial grid on/off"""
+        try:
+            if self.grid_lines:
+                self.grid_lines.visible = not self.grid_lines.visible
+                self.log(f"Grid visibility: {self.grid_lines.visible}", "DEBUG", "toggle_spatial_grid")
+            else:
+                # Create grid if it doesn't exist
+                if self.show_spatial_grid:
+                    self.grid_lines = GridLines(parent=self.view.scene)
+                    self.log("Grid created and enabled", "DEBUG", "toggle_spatial_grid")
+        except Exception as e:
+            self.log(f"Grid toggle error: {e}", "ERROR", "toggle_spatial_grid")
 
 
-    def on_mouse_press(self, event):
-        """Handles mouse clicks - mainly used for particle selected at the moment"""
-        if event.button == 1: # left click
-            # get 3D coords from 2D click 
-            clicked_particle = self.find_closest_particle(event.pos)
+    #*# -- KEY PRESS HANDLERS -- #*#
 
-            if clicked_particle:
-                self.show_particle_details(clicked_particle)
+    def on_key_press(self, event):
+        """Handles key press events"""
+        if event.key == "r":    # reset camera
+            self.view.camera.center = (0, 0, 0)
+            self.view.camera.distance = 15
+        elif event.key == 'f':  # Focus on particles
+            if self.particle_source:
+                particles = self.particle_source.get_alive_particles()
+                if particles:
+                    # calculate center of all particles
+                    positions = [p.render()['position'][:3] for p in particles]
+                    center = np.mean(positions, axis=0)
+                    self.view.camera.center = center
+                    self.view.camera.distance = 30
+        elif event.key == 'h':  # toggle help overlay
+            self.help_overlay.visible = not self.help_overlay.visible
+        elif event.key == 'g':  # toggle spatial grid
+            self.toggle_spatial_grid()
+        elif event.key == "p":
+            agent = api.get_api("agent")
+            agent.save()
+            self.log("Manual agent state save triggered via visualizer", "INFO", "on_key_press")
+        elif event.key == 'Escape':  # close detail overlay
+            if self.detail_overlay:
+                self.detail_overlay = None
+            else:
+                pass  # No overlay to close
 
-    def find_closest_particle(self, screen_pos):
-        """Find particle using direct field references"""
-        tr = self.scene.node_transform(self.view.scene)
-        min_dist = float("inf")
-        closest = None
-        
-        for p_type in self.particle_visuals:
-            if len(self.particle_metadata[p_type]) > 0:
-                positions = self.particle_visuals[p_type]._data['pos']
-                
-                for i, field_particle in enumerate(self.particle_metadata[p_type]):
-                    if i < len(positions):
-                        pos_3d = positions[i]
-                        screen_3d = tr.map(pos_3d)
-                        distance = np.linalg.norm(screen_3d[:2] - screen_pos)
-                        
-                        if distance < min_dist and distance < 50:  # 50px tolerance
-                            min_dist = distance
-                            closest = {
-                                'field_particle': field_particle,  # Direct field reference!
-                                'position': pos_3d,
-                                'type': p_type
-                            }
-        return closest
+    def on_canvas_click(self, event):
+        """Handles mouse click events"""
+        pass
 
-    def show_particle_details(self, particle_info):
-        """Show details using live field data"""
-        if hasattr(self, 'detail_overlay'):
-            self.detail_overlay.parent = None
-        
-        field_particle = particle_info['field_particle']
-        
-        # Get LIVE data from field particle
-        detail_text = f"""
-LIVE FIELD PARTICLE
-==================
-ID: {str(field_particle.id)[:8]}...
-Type: {field_particle.type.upper()}
-Position: {field_particle.position[:3]}
-Energy: {field_particle.energy:.3f}
-Activation: {field_particle.activation:.3f}
-Policy: {getattr(field_particle, 'policy', 'unknown')}
-Alive: {field_particle.alive}
-Linked Particles: {len(field_particle.linked_particles.get('children', []))}
 
-QUANTUM STATE:
-Certainty: {field_particle.superposition['certain']:.3f}
-Collapsed: {hasattr(field_particle, 'collapsed_state')}
+    #*# -- CAMERA -- #*#
 
-SPATIAL INFO:
-Grid Key: {self.particle_source._get_grid_key(field_particle.position)}
-Neighbors: {len(self.particle_source.get_spatial_neighbors(field_particle, radius=0.6))}
-
-Click elsewhere to close
-"""
-        
-        self.detail_overlay = Text(
-            detail_text,
-            pos=(50, 50),
-            font_size=10,
-            color='white',
-            parent=self.view
-        )
+    def setup_camera_controls(self):
+        """Set up camera controls and bindings"""
+        self.events.key_press.connect(self.on_key_press)
+        pass
 
 
     #*# -- VISUALIZATION / RENDERING -- #*#
 
-    def convert_hues_to_rgba(self, hues, saturations, brightness, opacities):
-        """Converts arrays of hues (particle type), saturations (frequency), brightness (valence), and opacities (certainty) to RGBA color values"""
-        import colorsys
+    def update_particles(self):
+        """Updates the particle visuals on the canvas based on the current field state"""
+        # debug statement
+        #self.log("update_particles() called", "DEBUG", "update_particles")  # Add this line
 
-        colors = []
-        for hue, sat, bright, opacity in zip(hues, saturations, brightness, opacities):
-            # converting from 0-360 to 0-1
-            h = (hue % 360) / 360.0
-            s = min(max(sat, 0.0), 1.0)
-            v = min(max(bright, 0.0), 1.0)
+        # update particle source
+        if self.particle_source is None:
+            self.particle_source = api.get_api("_agent_field")
+            if self.particle_source is None:
+                self.log("Particle source not available - skipping update particles rotation", "WARNING", "update_particles")
+                return 
+        
+        if not self.visualizer_enabled:
+            self.log("Visualizer not enabled - skipping update", "INFO", "update_particles")
+            return
+        
+        # debug statement
+        #self.log("Updating particles...", "DEBUG", "update_particles")
+        
+        try: # update loop
+            alive_particles = self.particle_source.get_alive_particles()
+            current_particle_ids = set(str(p.id) for p in alive_particles)
 
-            # convert hsv to rgb
-            r, g, b = colorsys.hsv_to_rgb(h, s, v)
-            colors.append([r, g, b, opacity])
+            self._update_interactive_particles(alive_particles, current_particle_ids)
 
-        return np.array(colors, dtype=np.float32)
+            all_entanglements = []
 
-    def update_field_attention_indicator(self):
-        """Show conscious attention region from field"""
+            for particle in alive_particles:
+                particle_id = str(particle.id)
+                render_data = particle.render()
+                current_pos = render_data["position"]
+
+                # update position history
+                if particle_id not in self.position_history:
+                    self.position_history[particle_id] = []
+                
+                self.position_history[particle_id].append(current_pos)
+                if len(self.position_history[particle_id]) > self.trail_length:
+                    self.position_history[particle_id].pop(0)
+
+                # collect entanglements
+                if self.show_entanglements and "entanglements" in render_data:
+                    for entanglement in render_data["entanglements"]:
+                        all_entanglements.append({
+                            "source_pos": current_pos,
+                            "target_id": entanglement["target_id"],
+                            "strength": entanglement["strength"],
+                            "type": entanglement["type"]
+                        })
+            
+            # update trails if enabled
+            if self.show_trails:
+                self._update_particle_trails()
+            
+            # update entanglements if enabled
+            if self.show_entanglements:
+                self._update_entanglement_connections(all_entanglements, alive_particles)
+            
+            # Update shimmer effects if enabled
+            if self.show_shimmer:
+                self._update_shimmer_effects(alive_particles)
+            
+            # Update metadata storage for interaction
+            self._update_particle_metadata(alive_particles)
+
+            # Clean up old data
+            self._cleanup_old_visuals(current_particle_ids)
+            
+            # Update the canvas
+            self.update()
+            
+        except Exception as e:
+            self.log(f"Particle update error: {str(e)}", "ERROR", "update_particles")
+
+    def _update_interactive_particles(self, alive_particles, current_particle_ids):
+        """Update the interactive particle objects"""
         try:
-            attention_region = self.particle_source.get_conscious_attention_region()
-            if attention_region:
-                # Highlight the conscious attention grid sector
-                grid_key = attention_region
-                center_pos = np.array([
-                    grid_key[0] * self.particle_source.grid_size,
-                    grid_key[1] * self.particle_source.grid_size, 
-                    grid_key[2] * self.particle_source.grid_size
-                ])
+            # Remove dead particles
+            dead_particle_ids = set(self.interactive_particles.keys()) - current_particle_ids
+            for dead_id in dead_particle_ids:
+                if self.interactive_particles[dead_id]:
+                    self.interactive_particles[dead_id].parent = None
+                del self.interactive_particles[dead_id]
+            
+            # Update existing and create new particles
+            for particle in alive_particles:
+                particle_id = str(particle.id)
                 
-                # Create attention region indicator
-                if hasattr(self, 'attention_marker'):
-                    self.attention_marker.parent = None
-                
-                self.attention_marker = Markers(parent=self.view.scene)
-                self.attention_marker.set_data(
-                    pos=np.array([center_pos]),
-                    size=np.array([20]),  # Larger marker
-                    face_color=np.array([[1.0, 1.0, 0.0, 0.3]]),  # Yellow glow
-                    edge_color=np.array([[1.0, 1.0, 0.0, 0.8]]),
-                    edge_width=2
-                )
+                if particle_id in self.interactive_particles:
+                    # Update existing interactive particle
+                    self.interactive_particles[particle_id].update_particle_data(particle)
+                else:
+                    # Create new interactive particle
+                    interactive_particle = InteractableParticle(
+                        particle_data=particle,
+                        canvas_ref=self,
+                        parent=self.view.scene,
+                        antialias=True
+                    )
+                    self.interactive_particles[particle_id] = interactive_particle
+                    
+        except Exception as e:
+            self.log(f"Interactive particle update error: {e}", "ERROR", "_update_interactive_particles")
+
+    def _cleanup_old_visuals(self, current_particle_ids):
+        """Clean up visual effects for particles that no longer exist"""
+        try:
+            # Clean up trails
+            old_trail_ids = set(self.trail_visuals.keys()) - current_particle_ids
+            for old_id in old_trail_ids:
+                if old_id in self.trail_visuals and self.trail_visuals[old_id]:
+                    self.trail_visuals[old_id].parent = None
+                self.trail_visuals.pop(old_id, None)
+
+            old_shimmer_ids = set(self.shimmer_visuals.keys()) - current_particle_ids
+            for old_id in old_shimmer_ids:
+                if old_id in self.shimmer_visuals and self.shimmer_visuals[old_id]:
+                    self.shimmer_visuals[old_id].parent = None
+                self.shimmer_visuals.pop(old_id, None)
+            
+            # Clean up position history
+            old_history_ids = set(self.position_history.keys()) - current_particle_ids
+            for old_id in old_history_ids:
+                self.position_history.pop(old_id, None)
                 
         except Exception as e:
-            self.log(f"Error updating attention indicator: {e}", "ERROR", "update_field_attention_indicator")
+            self.log(f"Cleanup error: {e}", "ERROR", "_cleanup_old_visuals")
 
-    def update_connections_from_field(self):
-        """Draw connections using actual field linkages"""
-        if not self.show_entanglements:
-            return
-        
-        connection_points = []
-        connection_colors = []
-        
-        alive_particles = self.particle_source.get_alive_particles()
-        
-        for particle in alive_particles:
-            # Use actual field linkage data
-            children = particle.linked_particles.get('children', [])
-            
-            for child_id in children:
-                child_particle = self.particle_source.get_particle_by_id(child_id)
-                if child_particle and child_particle.alive:
-                    # Draw line between actual field positions
-                    connection_points.extend([
-                        particle.position[:3],  # Parent position
-                        child_particle.position[:3]  # Child position
-                    ])
-                    
-                    # Color based on actual connection strength
-                    distance = np.linalg.norm(particle.position[:3] - child_particle.position[:3])
-                    strength = max(0.2, 1.0 - (distance * 0.5))  # Closer = stronger
-                    
-                    connection_colors.extend([
-                        [0.5, 0.5, 1.0, strength],
-                        [0.5, 0.5, 1.0, strength]
-                    ])
-        
-        if connection_points and self.connection_lines is not None:
-            try:
-                self.connection_lines.set_data(
-                    pos=np.array(connection_points, dtype=np.float32),
-                    color=np.array(connection_colors, dtype=np.float32)
-                )
-            except Exception as e:
-                self.log(f"Error updating connection lines: {e}", "WARNING", "update_connections_from_field")
-
-    async def update_particles(self):
-        """Updates the particle visuals on the canvas based on the current field state"""
-        if not self.particle_source:
-            return
-        
-        alive_particles = self.particle_source.get_alive_particles()
-
-        by_type = {
-            "memory": [],
-            "lingual": [],
-            "sensory": [],
-            "core": [],
-            "unknown": []
-        }
-
-        for particle in alive_particles:
-            render_data = await particle.render()
-            p_type = render_data.get("type", "unknown") # if invalid or new particle type is detected, add to "unknown" category
-            by_type[p_type].append({
-                "render_data": render_data,
-                "particle_ref": particle        # reference to actual particle in field
-            })
-
-        for p_type, particle_list in by_type.items():
-            if particle_list:
-                # stacking position arrays
-                positions = np.stack([p["render_data"]["position"] for p in particle_list])
-                sizes = np.array([p["render_data"]["size"] for p in particle_list])
-
-                # pull color values
-                colors = self.convert_hues_to_rgba(
-                    hues = np.array([p["render_data"]["color_hue"] for p in particle_list]),
-                    saturations = np.array([p["render_data"]["color_saturation"] for p in particle_list]),
-                    brightness = np.array([p["render_data"]["glow"] for p in particle_list]),
-                    opacities = np.array([p["render_data"]["quantum_state"]["opacity"] for p in particle_list])
-                )
-
-                # update vispy visuals with error handling
-                if p_type in self.particle_visuals and self.particle_visuals[p_type] is not None:
-                    try:
-                        self.particle_visuals[p_type].set_data(
-                            pos=positions,
-                            size=sizes,
-                            face_color=colors
+    def _update_particle_trails(self):
+        """Update trail visuals for particles"""
+        try:
+            for particle_id, positions in self.position_history.items():
+                if len(positions) > 1:
+                    if particle_id not in self.trail_visuals:
+                        self.trail_visuals[particle_id] = Line(
+                            parent=self.view.scene, 
+                            antialias=True
                         )
-                    except Exception as e:
-                        self.log(f"Error updating {p_type} particle visuals: {e}", "WARNING", "update_particles")
+                    
+                    # Create trail with fading opacity
+                    trail_positions = np.array(positions, dtype=np.float32)
+                    
+                    # Create color array with fading alpha
+                    trail_colors = []
+                    for i, pos in enumerate(positions):
+                        alpha = (i + 1) / len(positions) * 0.5  # Fade from 0 to 0.5
+                        trail_colors.append([0.5, 0.5, 0.5, alpha])
+                    
+                    trail_colors = np.array(trail_colors, dtype=np.float32)
+                    
+                    # Update trail visual
+                    if self.trail_visuals[particle_id]:
+                        self.trail_visuals[particle_id].set_data(
+                            pos=trail_positions, 
+                            color=trail_colors,
+                            connect='strip'  
+                        )
+                            
+        except Exception as e:
+            self.log(f"Trail update error: {str(e)}", "ERROR", "_update_particle_trails")
+
+    def _update_entanglement_connections(self, entanglements, all_particles):
+        """Update connection lines between entangled particles"""
+        try:
+            if not entanglements:
+                return
+                
+            # Create particle ID to position mapping
+            particle_positions = {}
+            for particle in all_particles:
+                render_data = particle.render()
+                particle_positions[str(particle.id)] = render_data['position']
+            
+            # Build connection lines
+            connection_lines = []
+            connection_colors = []
+            
+            for entanglement in entanglements:
+                target_id = entanglement['target_id']
+                if target_id in particle_positions:
+                    source_pos = entanglement['source_pos']
+                    target_pos = particle_positions[target_id]
+                    strength = entanglement['strength']
+                    
+                    # Add line segment
+                    connection_lines.extend([source_pos, target_pos])
+                    
+                    # Color based on connection strength
+                    alpha = min(strength, 1.0)
+                    connection_colors.extend([
+                        [1.0, 1.0, 0.0, alpha],  # Yellow connections
+                        [1.0, 1.0, 0.0, alpha]
+                    ])
+            
+            if connection_lines:
+                connection_lines = np.array(connection_lines, dtype=np.float32)
+                connection_colors = np.array(connection_colors, dtype=np.float32)
+                
+                # Update or create connection visual
+                # TODO
+                
+        except Exception as e:
+            self.log(f"Entanglement update error: {str(e)}", "ERROR", "_update_entanglement_connections")
+
+    def _update_shimmer_effects(self, particles):
+        """Update shimmer effects for uncertain particles"""
+        # TODO
+        try:
+            current_time = dt.datetime.now().timestamp()
+            
+            for particle in particles:
+                render_data = particle.render()
+                particle_id = str(particle.id)
+                
+                if render_data['quantum_state']['animation'] == 'shimmer':
+                    if particle_id not in self.shimmer_visuals:
+                        # Create shimmer visual for this particle
+                        # (Implementation depends on your shimmer visual setup)
+                        pass
+                    
+                    # Update shimmer effect
+                    # (Animate shimmer based on current_time and uncertainty)
+                    
+        except Exception as e:
+            self.log(f"Shimmer update error: {str(e)}", "ERROR", "_update_shimmer_effects")
+
+    def _update_particle_metadata(self, particles):
+        """Update particle metadata storage for interactions"""
+        try:
+            # Get current particle IDs
+            current_particle_ids = set(str(p.id) for p in particles)
+            
+            # Clean up old trail visuals for particles that no longer exist
+            old_trail_ids = set(self.trail_visuals.keys()) - current_particle_ids
+            for old_id in old_trail_ids:
+                if self.trail_visuals[old_id]:
+                    self.trail_visuals[old_id].parent = None  # Remove from scene
+                del self.trail_visuals[old_id]
+                
+            # Clean up old position history
+            old_history_ids = set(self.position_history.keys()) - current_particle_ids
+            for old_id in old_history_ids:
+                del self.position_history[old_id]
+            
+            # Clear previous metadata
+            for p_type in self.particle_metadata:
+                self.particle_metadata[p_type].clear()
+            
+            # Rebuild metadata storage
+            for particle in particles:
+                p_type = getattr(particle, 'type', 'unknown')
+                if p_type not in self.particle_metadata:
+                    self.particle_metadata[p_type] = []
+                
+                render_data = particle.render()
+                metadata_entry = {
+                    'id': render_data['id'],
+                    'position': render_data['position'],
+                    'particle_ref': particle,  # Keep reference for interaction
+                    'render_data': render_data
+                }
+                self.particle_metadata[p_type].append(metadata_entry)
+                
+        except Exception as e:
+            self.log(f"Metadata update error: {str(e)}", "ERROR", "_update_particle_metadata")
 
 
-                self.particle_metadata[p_type] = [p["particle_ref"] for p in particle_list]
+class InteractableParticle(Markers):
+    """Custom vispy markers class for interactable particles"""
+    def __init__(self, particle_data, canvas_ref, **kwargs):
+        super().__init__(**kwargs)
+        self.unfreeze()
+        self.particle_data = particle_data
+        self.canvas_ref = canvas_ref
+
+        render_data = particle_data.render()
+        display_size = render_data['size']
+
+        # set up marker data
+        self.set_data(
+            pos = np.array([render_data['position'][:3]], dtype=np.float32),
+            size = np.array([display_size], dtype=np.float32),
+            face_color = np.array([self._get_particle_color(render_data)], dtype=np.float32),
+        )
+        self.freeze()
+
+        # interaction
+        self.interactive = True
+        self.events.mouse_press.connect(self.on_click)
+
+    def _get_particle_color(self, render_data):
+        """Determine color based on render data"""
+        h = (float(render_data['color_hue']) % 360) / 360.0
+        s = min(max(abs(float(render_data['color_saturation'])), 0.3), 1.0)
+        v = min(max(abs(render_data["glow_intensity"]), 0.3), 1.0)
+        raw_opacity = float(render_data["quantum_state"]["opacity"])
+
+        opacity = max(raw_opacity, 0.7)
+
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
+        return [r, g, b, opacity]
+    
+    def on_click(self, event):
+        """Handle click events on the particle"""
+        if self.canvas_ref:
+            self.canvas_ref.log(f"Particle {self.particle_data.id} clicked", "INFO", "InteractableParticle")
+            self.show_live_particle_details(self.particle_data)
+            event.handled = True
+
+    def show_live_particle_details(self, particle_data):
+        """Show live particle details (called by click handler)"""
+        if hasattr(self.canvas_ref, 'detail_overlay') and self.canvas_ref.detail_overlay:
+            self.canvas_ref.detail_overlay.parent = None
+        
+        detail_text = f"""
+LIVE PARTICLE DATA
+==================
+ID: {str(particle_data.id)[:8]}...
+Type: {particle_data.type.upper()}
+Position: {particle_data.position[:3]}
+Energy: {particle_data.energy:.4f}
+Activation: {particle_data.activation:.4f}
+Alive: {particle_data.alive}
+
+QUANTUM STATE:
+Certain: {particle_data.superposition.get('certain', 0.0):.3f}
+Uncertain: {particle_data.superposition.get('uncertain', 0.0):.3f}
+
+Press 'Esc' to close
+"""
+        
+        self.canvas_ref.detail_overlay = Text(
+            detail_text,
+            pos=(50, 50),
+            font_size=12,
+            color='white',
+            parent=self.canvas_ref.view,
+            anchor_x='left',
+            anchor_y='top'
+        )
+
+    def update_particle_data(self, new_particle_data):
+        """Update this particle's visual data"""
+        self.unfreeze()
+        self.particle_data = new_particle_data
+        render_data = new_particle_data.render()
+        
+        self.set_data(
+            pos=np.array([render_data['position'][:3]], dtype=np.float32),
+            size=np.array([render_data['size']], dtype=np.float32),
+            face_color=np.array([self._get_particle_color(render_data)], dtype=np.float32)
+        )
+        self.freeze()
+
+
+# registering visualizer to APIregistry for global access
+api.register_api("visualizer", VisualizerCanvas)

@@ -12,7 +12,7 @@ class Config():
         #TODO: add support for OS detection and autofill
         self.os_name = "linux"
         self.os_version = "fedora-42"
-        self.wayland_active = True
+        self.wayland_active = False
 
         self.user_name = "Tony"
         

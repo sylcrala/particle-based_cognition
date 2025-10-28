@@ -11,6 +11,7 @@ import random
 import numpy as np
 from apis.agent.utils.embedding import ParticleLikeEmbedding
 from apis.api_registry import api
+import traceback
 
 
 class Particle:
@@ -516,12 +517,18 @@ class Particle:
             return False
         shimmer_rate = (1 - certainty) * 5  # More uncertain = faster shimmer
         return (current_time * shimmer_rate) % 1 < 0.5
+
     
-    async def render(self):
+    def render(self):
         """Renders the particle in 3D space in accordance to each particles first three dimensional positions: x, y, z respectively. Other properties for visualization are derived from the particles other properties or dimensional positions."""
         current_time = dt.datetime.now().timestamp()
 
-        pos_3d = self.position[:3].astype(np.float32)
+        #pos_3d = {
+        #    self.position[0],  # x
+        #    self.position[1],  # y
+        #    self.position[2]   # z
+        #}
+        pos_3d = self.position[:3].tolist()
         
         # calculating age
         age = current_time - self.position[3]
@@ -712,12 +719,13 @@ class Particle:
             # Map to [-1,1] range
             return min(max(value, -1), 1)
 
-    async def create_linked_particle(self, particle_type, content, relationship_type="triggered"):
+    async def create_linked_particle(self, particle_type, content, relationship_type="triggered", context=None):
         """Create a new particle linked to this particle"""
 
         metadata = {
             "content": content,
             "triggered_by": self.id,
+            "context": context or {},
             "relationship": relationship_type,
             "source": f"{self.type}_particle_creation"
         }

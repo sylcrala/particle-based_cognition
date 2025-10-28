@@ -39,6 +39,34 @@ class LexiconStore:
         if word:
             tokens.append(word)
         return tokens
+    
+    async def add_from_particle(self, particle):
+        """Add terms from particle content"""
+        try:
+            content = str(particle.metadata)
+            if not content:
+                self.logger.log(f"No content in particle {particle.id} to add to lexicon", "WARNING", "add_from_particle")
+                return False
+            
+            tokens = self.custom_tokenizer(content)
+            total_count = len(tokens)
+            added_count = 0
+            for token in tokens:
+                if added_count == total_count:
+                    break
+                await self.add_term(
+                    token=token,
+                    context=f"from_particle_{particle.id}",
+                    source=f"particle_{particle.type}",
+                    term_type="particle_metadata",
+                    tags=["particle_learning", f"{particle.type}", "parsed_metadata"],
+                    particle_id=particle.id
+                )
+
+
+        except Exception as e:
+            self.logger.log(f"Error adding from particle: {e}", "ERROR", "add_from_particle")
+            return False
 
     async def add_term(self, token, full_phrase=None, definitions=None, context=None,
                       source="unknown", intent=None, term_type=None, tags=None,
@@ -170,12 +198,27 @@ class LexiconStore:
         try:
             if token in self.lexicon:
                 entry = self.lexicon[token]
+                asyncio.create_task(self.encounter_existing_term(token))
                 if isinstance(entry, dict):
                     return len(entry.get("definitions", [])) > 0 or len(entry.get("contexts", [])) > 0
             return False
         except Exception as e:
             self.logger.log(f"Error checking deep entry for {token}: {e}", "ERROR", "has_deep_entry")
             return False
+        
+    async def encounter_existing_term(self, token, context=None, source=None):
+        """Bump consciousness when encountering existing terms"""
+        if token in self.lexicon:
+            current_entry = self.lexicon[token]
+            current_entry["consciousness_level"] = min(1.0, 
+                current_entry.get("consciousness_level", 0.5) + 0.005)
+            
+            await self.memory.update(
+                key=f"lexicon_{token}",
+                value=current_entry,
+                memory_type="lexicon",
+                consciousness_level=current_entry["consciousness_level"]
+            )
 
     async def get_term(self, token):
         """Enhanced get_term using Qdrant memory system with local cache"""

@@ -131,13 +131,7 @@ class MetaVoice:
             except Exception as e:
                 self.log(f"Failed to trigger reasoning cycle: {e}", "WARNING", context="generate_internal")
 
-        # Debug linkage check
-        if not hasattr(input_particle, 'linked_particles') or input_particle.linked_particles is None:
-            input_particle.linked_particles = {"source": None, "children": [], "ghost": []}
-        elif "children" not in input_particle.linked_particles:
-            input_particle.linked_particles["children"] = []
-
-        self.log(f"DEBUG: children type: {type(input_particle.linked_particles['children'])}", "DEBUG")
+        self.log(f"DEBUG: children type: {type(input_particle.linked_particles.get("children", []))}", "DEBUG")
 
         # build full context list and generate seed base
         if context_particles is not None:
@@ -549,20 +543,32 @@ class MetaVoice:
         """Spawn a lingual particle for input text"""
         try:
             if self.field:
-                particle = await self.field.spawn_particle(
-                    type="lingual",
-                    metadata={
-                        "content": text,
-                        "source": source or "unknown",
-                        "processing_type": "input" if source == "user_input" else "unknown_input",
-                        "timestamp": time()
-                    },
-                    energy=0.5,
-                    activation=0.7,
-                    source_particle_id=source_particle_id if source_particle_id else None,
-                    emit_event=False
-                )
-                return particle
+                if source_particle_id:
+                    source_particle = await self.field.get_particle_by_id(source_particle_id)
+                    particle = source_particle.create_linked_particle(
+                        particle_type="lingual",
+                        content = text,
+                        relationship_type="input_processing",
+                        context = source or "unknown"
+                    )
+                    self.lexicon_store.add_from_particle(particle)
+                    return particle
+                else:
+                    particle = await self.field.spawn_particle(
+                        type="lingual",
+                        metadata={
+                            "content": text,
+                            "source": source or "unknown",
+                            "processing_type": "input" if source == "user_input" else "unknown_input",
+                            "timestamp": time()
+                        },
+                        energy=0.5,
+                        activation=0.7,
+                        source_particle_id=source_particle_id if source_particle_id else None,
+                        emit_event=False
+                    )
+                    self.lexicon_store.add_from_particle(particle)
+                    return particle
             return None
         except Exception as e:
             self.log(f"Error spawning input particle: {e}")
@@ -657,8 +663,30 @@ class MetaVoice:
             chance = random.randint(0, 100) / 100
             if particle is None:
                 
-                if chance < 0.4:
-                    return  # 40% chance to skip reflection
+                if chance < 0.05:
+                    # General reflection
+                    reflection_prompt = " "
+                    self.log("Generating open-ended reflection")
+
+                elif chance >= 0.05 and chance < 0.2:
+                    # Reflect on recent thought
+                    if self.thoughts:
+                        recent_thought = self.thoughts[-1]
+                        reflection_prompt = f"I'm reflecting on my recent thought: {recent_thought.get('thought', '')}"
+                        self.log(f"Reflecting on recent thought: {recent_thought.get('thought', '')}")
+                    else:
+                        reflection_prompt = "I'm drawing a blank."
+                        self.log("No recent thoughts available for reflection")
+
+                elif chance >= 0.2 and chance < 0.4:
+                    # Reflect on recent chat
+                    if self.chat_history:
+                        recent_chat = self.chat_history[-1]
+                        reflection_prompt = f"I'm reflecting on my recent conversation: {recent_chat.get('Tony', '')}"
+                        self.log("Reflecting on recent chats")
+                    else:
+                        reflection_prompt = "I have no recent conversations to reflect on."
+                        self.log("No recent chat history available for reflection")
 
                 elif chance >= 0.4 and chance < 0.5:
                     # Generate reflection
@@ -691,8 +719,9 @@ class MetaVoice:
                         self.log("No particle positions available for reflection OR unable to parse")
             
             else:
-                reflection_prompt = f"[Reflection] Reflecting on: {str(await particle.get_content())}"
-                self.log(f"Reflecting on particle {particle.id}: {str(await particle.get_content())}")
+                safe_content = await self.safe_get_particle_content(particle)
+                reflection_prompt = f"I'm thinking about my neuron {particle.id} and it's content: {safe_content}"
+                self.log(f"Reflecting on particle {particle.id}: {safe_content}")
 
             # Trigger reasoning cycle before reflection generation for CoT processing
             anchor = api.get_api("_agent_anchor")

@@ -29,11 +29,6 @@ class APIRegistry:
         self._lock = asyncio.Lock()
         self.apis = {}  # legacy compat
 
-        self._message_queue = Queue()
-        self._response_queue = Queue()
-        self._message_handler_active = False
-        self._handler_thread = None
-
     def log(self, message, level = None, context = None):
         if context != None:
             context = context
@@ -68,8 +63,6 @@ class APIRegistry:
         if instance is not None:
             self._apis[name].status = APIStatus.ACTIVE
 
-        if name == "_agent_field" and instance is not None:
-            self._start_message_handler()
     
     def get_api(self, name: str, validate_health: bool = False) -> Optional[Any]:
         """Get API with optional health validation"""
@@ -107,156 +100,37 @@ class APIRegistry:
         else:
             return method_obj(*args, **kwargs)
 
-    def _start_message_handler(self):
-        """Start the background message handling thread"""
-        if not self._message_handler_active:
-            self._message_handler_active = True
-            self._handler_thread = threading.Thread(
-                target=self._message_handler_worker,
-                daemon=True,
-                name="AgentMessageHandler"
-            )
-            self._handler_thread.start()
-            print("Started AgentMessageHandler thread")
-
-    def _message_handler_worker(self):
-        while self._message_handler_active:
-            try:
-                try:
-                    message_data = self._message_queue.get(timeout=1.0)
-                except Empty:
-                    continue
-
-                response = self._process_agent_message(message_data)
-                
-                self._response_queue.put({
-                    "id": message_data.get("id"),
-                    "response": response,
-                    "timestamp": datetime.now().isoformat()
-                })    
-
-                self._message_queue.task_done()
-
-            except Exception as e:
-                print(f"Error in message handler: {e}")
-                if "logger" in self.apis:
-                    logger = self.get_api("logger")
-                    if logger and hasattr(logger, 'log'):
-                        logger.log(f"Error in message handler: {e}", "ERROR", "APIRegistry", "_message_handler_worker")
-                
-                if "message_data" in locals():
-                    self._response_queue.put({
-                        "id": message_data.get("id", "unknown"),
-                        "response": f"Error processing message: {e}",
-                        "error": True,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-    def _process_agent_message(self, message_data):
-        """Process agent message using existing EventHandler"""
-        try:
-            message = message_data['message']
-            source = message_data.get('source', 'api_registry')
-
-            agent_core = self.get_api("agent")
-            if not agent_core:
-                return "Agent core not available"
-
-            event_handler = getattr(agent_core, 'event_handler', None)
-            if not event_handler:
-                try:
-                    event_handler = self.get_api("_agent_events")
-                except Exception as e:
-                    self.log(f"Event handler retrieval error: {e}", "ERROR", "_process_agent_message")
-                    return f"Event handler not available | {e}"
-            
-            # Create event for user input
-            from time import time
-            event = {
-                "type": "user_input",
-                "data": message,
-                "source": source,
-                "timestamp": time()
-            }
-            
-            try:
-                if hasattr(event_handler, 'handle_event_sync'):
-                    self.log("Using handle_event_sync for event processing", "DEBUG", "_process_agent_message")
-                    result = event_handler.handle_event_sync(event)
-                else:
-                    self.log("handle_event_sync not found, using async with timeout", "WARNING", "_process_agent_message")
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(
-                            lambda: asyncio.run(event_handler.handle_event(event))
-                        )
-                        result = future.result(timeout=120.0)
-                
-                if result:
-                    # Handle different response formats
-                    if hasattr(result, 'content'):
-                        return str(result.content)
-                    elif hasattr(result, 'token'):
-                        return str(result.token)
-                    elif isinstance(result, str):
-                        return result
-                    else:
-                        return str(result)
-                else:
-                    return "I processed your message but didn't generate a response."
-                    
-
-
-            except concurrent.futures.TimeoutError:
-                return "Response generation timed out; response is likely still being generated."
-            except Exception as injection_error:
-                return f"Event handling error: {injection_error}"
-                
-        except Exception as e:
-            return f"Message processing error: {e}"
-   
-    def handle_agent_message(self, message: str, source: str = None, 
-                           tags: list = None, timeout: float = 30.0) -> str:
+    async def handle_manual_state_save(self):
         """
-        MAIN API: Handle agent message with response        
+        Manual trigger for saving agent cognitive state
         """
-
         try:
-            if not self._message_handler_active:
-                return "Agent message handler not active"
-            
-            # Generate unique message ID
-            message_id = f"msg_{int(datetime.now().timestamp() * 1000)}"
+            if "_agent_memory" in self.apis:
+                memory = self.get_api("_agent_memory")
+                if memory and hasattr(memory, 'emergency_save'):
+                    print("Performing emergency memory save...")
+                    await memory.emergency_save()
 
-            # Prepare message data
-            message_data = {
-                'id': message_id,
-                'message': message,
-                'source': source,
-                'tags': tags or ['gui_message'],
-                'timestamp': datetime.now().timestamp()
-            }
+            if "_agent_field" in self.apis:
+                field = self.get_api("_agent_field")
+                if field and hasattr(field, 'save_field_state'):
+                    print("Saving particle field state...")
+                    await field.save_field_state()
+
+            if "_agent_adaptive_engine" in self.apis:
+                adaptive = self.get_api("_agent_adaptive_engine")
+                if adaptive and hasattr(adaptive, 'save_learning_state'):
+                    print("Preserving learning adaptations...")
+                    await adaptive.save_learning_state()
             
-            # Queue the message
-            self._message_queue.put(message_data)
-            
-            # Wait for response
-            start_time = datetime.now().timestamp()
-            while datetime.now().timestamp() - start_time < timeout:
-                try:
-                    response_data = self._response_queue.get(timeout=0.1)
-                    if response_data['id'] == message_id:
-                        return response_data['response']
-                    else:
-                        # Put back if not our response
-                        self._response_queue.put(response_data)
-                except Empty:
-                    continue
-            
-            return "Timeout waiting for agent response"
-            
+            # Phase 4: System state snapshot
+            if "logger" in self.apis:
+                logger = self.get_api("logger")
+                if logger:
+                    logger.log("System graceful shutdown completed", "INFO", "APIRegistry", "shutdown")
+
         except Exception as e:
-            return f"Error handling message: {e}"
+            self.log(f"Manual state save error: {str(e)}", "ERROR", "handle_manual_state_save")
 
     async def handle_shutdown(self):
         """
@@ -265,12 +139,6 @@ class APIRegistry:
         try:
             print("Initiating graceful cognitive shutdown...")
             
-            # Stop message handler first
-            self._message_handler_active = False
-            if self._handler_thread and self._handler_thread.is_alive():
-                print("Stopping message handler...")
-                self._handler_thread.join(timeout=5.0)
-
             # Phase 1: Save critical memory state
             if "_agent_memory" in self.apis:
                 memory = self.get_api("_agent_memory")
@@ -345,10 +213,6 @@ class APIRegistry:
                     print("Restoring learning adaptations...")
                     await adaptive.restore_learning_state()
 
-            # Phase 4: Restart message handler if field is available
-            if "_agent_field" in self.apis:
-                self._start_message_handler()
-            
             print("Cognitive state restoration completed successfully")
             
         except Exception as e:
@@ -359,10 +223,6 @@ class APIRegistry:
         """Get comprehensive agent system status"""
         try:
             status = {
-                'message_handler_active': self._message_handler_active,
-                'handler_thread_alive': self._handler_thread.is_alive() if self._handler_thread else False,
-                'pending_messages': self._message_queue.qsize(),
-                'pending_responses': self._response_queue.qsize(),
                 'apis': {}
             }
             

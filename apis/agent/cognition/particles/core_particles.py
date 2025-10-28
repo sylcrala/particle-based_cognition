@@ -217,13 +217,6 @@ class CoreParticle(Particle):
                         self.metadata["last_wikipedia_context"] = context_summary
             except Exception as e:
                 self._log_decision(f"Wikipedia context lookup failed: {e}", "DEBUG")
-            
-            # Process through field injection with core context
-            #result = await self.field.inject_action(
-            #    str(user_message), 
-            #    source="user_input-core",
-            #    source_particle_id=self.id,
-            #)
 
             # generate via meta voice directly
             result = await self.meta_voice.generate(prompt=user_message, source="user_input", source_particle_id=str(self.id))
@@ -416,7 +409,7 @@ class CoreParticle(Particle):
                             self.managed_particles.append(knowledge_particle.id)
                             
                             # Also reflect on the new knowledge
-                            await self.meta_voice.reflect(particle=knowledge_particle)
+                            await self.lexicon_store.add_from_particle(particle=knowledge_particle)
                             
                             self.log(f"Wikipedia learning completed: {article_title}", "INFO", "process_reflection_queue")
                             self._update_decision_history(event, result=f"Wikipedia learning: {article_title}")
@@ -618,7 +611,7 @@ class CoreParticle(Particle):
         
         # Follow children linkages
         if hasattr(start_particle, 'linked_particles') and 'children' in start_particle.linked_particles:
-            children_ids = start_particle.linked_particles['children']
+            children_ids = start_particle.linked_particles.get("children", [])
             if children_ids:
                 # Pick the highest activation child
                 children = [self.field.get_particle_by_id(cid) for cid in children_ids[:5]]
