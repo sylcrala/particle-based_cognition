@@ -28,6 +28,9 @@ if config.wayland_active:
 from PyQt6.QtWidgets import (
     QWidget, 
     QStackedLayout,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton
 )
 from PyQt6.QtGui import QPalette
 from PyQt6.QtCore import Qt, QTimer
@@ -50,8 +53,12 @@ class VisualizerTab(QWidget):
         self.logger = api.get_api("logger")
         
         # set layout
-        self.layout = QStackedLayout()
-        self.setLayout(self.layout)
+        self.base_layout = QVBoxLayout()
+        self.setLayout(self.base_layout)
+        self.content_layout = QStackedLayout()
+        self.base_layout.addLayout(self.content_layout, stretch=10)
+        self.bar_layout = QHBoxLayout()
+        self.base_layout.addLayout(self.bar_layout, stretch=1)
         
         """
         # set palette
@@ -60,10 +67,33 @@ class VisualizerTab(QWidget):
         self.setPalette(palette)
         self.setAutoFillBackground(True) 
         """
+        # set up content area
         # set up vispy canvas
         self.visualizer_canvas = VisualizerCanvas()
-        # Add canvas to layout
-        self.layout.addWidget(self.visualizer_canvas.native)
+        #if self.visualizer_canvas.visualizer_enabled:
+        #    self.content_layout.addWidget(self.visualizer_canvas.native)
+
+        # set up bar area
+        self.visualizer_pause_btn = QPushButton("Pause/unpause visualizer")
+        self.visualizer_pause_btn.clicked.connect(self.toggle_visualizer_pause)
+        self.bar_layout.addWidget(self.visualizer_pause_btn)
+
+        self.visualizer_pwr_btn = QPushButton("Enable/disable visualizer")
+        self.visualizer_pwr_btn.clicked.connect(self.toggle_visualizer_enabled)
+        self.bar_layout.addWidget(self.visualizer_pwr_btn)
+
+
+
+    def toggle_visualizer_enabled(self):
+        self.visualizer_canvas.visualizer_enabled = not self.visualizer_canvas.visualizer_enabled
+        if self.visualizer_canvas.visualizer_enabled == False:
+            self.content_layout.removeWidget(self.visualizer_canvas.native)
+        if self.visualizer_canvas.visualizer_enabled == True:
+            self.content_layout.addWidget(self.visualizer_canvas.native)
+
+    def toggle_visualizer_pause(self):
+        self.visualizer_canvas.visualizer_enabled = not self.visualizer_canvas.visualizer_enabled
+        
 
 
     def log(self, message, level="INFO", context = None):
@@ -83,7 +113,7 @@ class VisualizerCanvas(scene.SceneCanvas):
     """The vispy canvas holding 3D field visualization, controls, and information overlays"""
     def __init__(self):
         self.logger = api.get_api("logger")
-        self.visualizer_enabled = True # flag to enable the visualizer - default is False to prevent ghost API calls, must be enabled in app via a button or toggle
+        self.visualizer_enabled = False # flag to enable the visualizer - default is False to prevent ghost API calls, must be enabled in app via a button or toggle
         self.agent_ready = False
         scene.SceneCanvas.__init__(self, keys="interactive", bgcolor="white") #bgcolor=(0.01, 0.01, 0.03, 1.0)
         self.unfreeze()
@@ -152,7 +182,7 @@ Escape to close particle details    |   "P" to save agent state
 
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_particles)
-        self.update_timer.start(50)  # 20 FPS
+        self.update_timer.start(100)  # 40 FPS
 
 
     def log(self, message, level="INFO", context = None):
@@ -319,7 +349,6 @@ Escape to close particle details    |   "P" to save agent state
                 return 
         
         if not self.visualizer_enabled:
-            self.log("Visualizer not enabled - skipping update", "INFO", "update_particles")
             return
         
         # debug statement
