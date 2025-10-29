@@ -332,10 +332,7 @@ class LexiconStore:
             self.logger.log("Loading lexicon from Qdrant memory system...", "INFO", "load_lexicon")
             
             # Load with extended timeout for large lexicons
-            memories = await asyncio.wait_for(
-                self.memory.get_memories_by_type("lexicon", limit=5000),  # Increased limit
-                timeout=60.0  # Extended timeout
-            )
+            memories =  await self.memory.get_memories_by_type("lexicon", limit=5000)
             
             if memories:
                 loaded_count = 0
@@ -350,7 +347,7 @@ class LexiconStore:
                             loaded_count += 1
                             
                             # Track consciousness-aware terms
-                            if memory.get("consciousness_level", 0) > 0.7:
+                            if memory.get("consciousness_level", 0) > 0.5:
                                 consciousness_terms += 1
                 
                 self.logger.log(
