@@ -49,7 +49,9 @@ This project was made over the course of a year and the combination and revision
 
 ## Disclaimer
 
-This project is in active development, and it is *nowhere near complete*. You are likely to find bugs and issues, and the GUI is currently not finished either.
+This project is in active development, and it is *nowhere near complete*. You are likely to find bugs and issues, and the GUI is currently not finished either. You're probably not going to encounter coherent speech from the agent, unless you're in llm-extension mode. Cog-growth mode currently is in very early linguistic development, but if you leave a session going long enough and watch the console + parse the logs, you'll see the development of language over time; Each session normally starts out with very probabilistic character generation based on particle/neuron location, frequency, valence, etc; but over time as more words and phrases are encountered this heavily changes; even when those phrases aren't fed back into the available alphabet + word pool for generation. 
+
+I'll be adding more diagnostic and analytical tools for observing the underlying behavior at play
 
 
 ## Contribution
