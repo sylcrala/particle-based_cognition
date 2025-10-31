@@ -1,3 +1,24 @@
+"""
+Particle-based Cognition Engine - deprecated GUI launcher
+Copyright (C) 2025 sylcrala
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version, subject to the additional terms 
+specified in TERMS.md.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License and TERMS.md for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+Additional terms apply per TERMS.md. See also ETHICS.md.
+"""
+
 import os
 import sys
 # environment and app setup methods
@@ -51,7 +72,7 @@ from apis.api_registry import api
 from shared_services import config
 from shared_services import logging
 from shared_services import system_metrics
-from apis.personal_tools.todo_list import todolist_api
+from apis.general_automation import todolist_api
 from apis.research.external_resources import ExternalResources
 
 # TODO: Refactor LLM usage as external component rather than core dependency (via external resources, similar to spaCy)
