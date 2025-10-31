@@ -9,6 +9,8 @@ This project, the Particle-based Cognition Engine, is released under the AGPLv3 
 
 By using this software, you agree to comply with these restrictions. Violations may result in the termination of your rights to use the software under the AGPLv3 license.
 
+
 --
 
-For questions or concerns, please reach out to contact@sylcrala.xyz
+
+For questions or concerns, please reach out to <contact@sylcrala.xyz>

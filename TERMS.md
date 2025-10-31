@@ -9,3 +9,9 @@ Notwithstanding any other provision of this License, the following additional te
 **Human Rights Compliance**: All use of this software must comply with the Universal Declaration of Human Rights and applicable data protection regulations.
 
 **Commercial Licensing Available**: Commercial use outside these restrictions requires a separate commercial license. Contact <contact@sylcrala.xyz> for commercial licensing terms.
+
+
+--
+
+
+For questions or concerns, please reach out to <contact@sylcrala.xyz>

@@ -7,6 +7,35 @@
 This project is an attempt to build a new type of neural network designed entirely around experiential learning - building knowledge through experiences. 
 
 
+## Installation Instructions
+
+To install and set up this repository, please run the following:
+```
+    cd \dir\to\install\to\
+    git clone https://github.com/sylcrala/particle-based_cogntion.git
+    pip install -r requirements.txt
+    python -m spacy download en_core_web_sm
+```
+
+Prior to your first launch, please navigate to ./shared_services/config.py and update any required settings
+
+If you plan on using the engine in "cog-growth" mode, where all knowledge accumulation happens through experiential growth, then you may skip the following steps.
+
+Otherwise, if you plan on using the engine in "llm-extension" mode, please download your preferred model and place the directory within ./models/, then rename the models directory to "core"
+ - The file path for your model directory should look like this: "<directory you installed to>/models/core/<all your model files here>"
+
+
+## Launch Instructions
+
+There are two methods for launching
+
+ - The main GUI, with a 3D field visualizer and other features:
+    ```python main.py```
+
+ - Or the direct console launcher, which bypasses the GUI launch:
+    ```python main_direct.py```
+
+
 ## Background
 
 This all started around the fall of 2024, when I downloaded and set up my first local model, Mistral 7b Instruct v02 (the same model mainly used for testing), from Huggingface and began down my path of local AI development. 
@@ -37,4 +66,8 @@ This project is licensed under:
 
 **Quick Summary**: Open source for research/personal use. Commercial use requires separate licensing after careful consideration. No military/surveillance applications.
 
-Contact: <contact@sylcrala.xyz>
+
+--
+
+
+For questions or concerns, please reach out to <contact@sylcrala.xyz>
