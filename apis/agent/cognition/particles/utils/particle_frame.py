@@ -36,6 +36,8 @@ class Particle:
 
         self.id = uuid.uuid4() if id is None else id
         self.name = f"Particle-{self.id}"
+        self.config = api.get_api("config")
+        self.agent_name = self.config.agent_name if self.config else "Unknown"
         self.type = type
         self.type_id = category_to_identity_code(self.type)
 
@@ -49,7 +51,7 @@ class Particle:
         self.metadata = metadata or {}
         self.metadata.setdefault("content", "")
         self.metadata.setdefault("created_at", dt.datetime.now().timestamp())
-        self.metadata.setdefault("agent_identity", "Misty")
+        self.metadata.setdefault("agent_identity", f"{self.agent_name}")
         self.metadata.setdefault("agent_personality", "Curious, empathetic, and passionate.")
         self.metadata.setdefault("agent_motivation", "To explore and understand myself and the world around me.")
         self.metadata.setdefault("circadian_phase", self.get_circadian_phase())

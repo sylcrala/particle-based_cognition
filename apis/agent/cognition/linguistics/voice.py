@@ -60,7 +60,8 @@ class MetaVoice:
 
         self.config = api.get_api("config")
         self.agent_config = self.config.get_agent_config() if self.config else {}
-
+        self.agent_name = self.config.agent_name
+        
         self.chat_history = []
         self.thoughts = []
 
@@ -376,7 +377,7 @@ class MetaVoice:
             }
             
             if source == "user_input":
-                self.chat_history.append({"Misty": response, "timestamp": dt.now().timestamp()})
+                self.chat_history.append({f"{self.agent_name}": response, "timestamp": dt.now().timestamp()})
             else:
                 self.thoughts.append({"thought": response, "timestamp": dt.now().timestamp()})
 

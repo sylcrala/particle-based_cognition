@@ -44,14 +44,13 @@ class CoreParticle(Particle):
 
         self.config = api.get_api("config")
         self.agent_config = self.config.get_agent_config() if self.config else {}
-        self.name = self.agent_config.get("name", "Agent") if self.agent_config else "Agent"
 
 
         if self.role == "identity_anchor":
             self.metadata["content"] = {
-                "name": self.name,
+                "name": self.agent_name,
                 "role": "Core Identity Anchor",
-                "description": f"{self.name} is an autonomous artificial intelligence designed to learn and grow from its experiences and relationships. As the core identity anchor, this particle maintains the agent's coherence, self-model, and overall integrity.",
+                "description": f"{self.agent_name} is an autonomous artificial intelligence designed to learn and grow from its experiences and relationships. As the core identity anchor, this particle maintains {self.agent_name}'s coherence, self-model, and overall integrity.",
                 "capabilities": [
                     "Reflect on experiences to refine self-model",
                     "Express personality and identity consistently",
