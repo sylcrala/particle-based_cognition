@@ -180,13 +180,11 @@ class VisualizerCanvas(scene.SceneCanvas):
         # help text box
         self.help_overlay = Text(
             """ 
-Controls:                           |   "R" to reset camera
-WASD for movement                   |   "F" to focus on particles center
-Mouse to pan camera                 |   "H" to toggle help overlay
-Left click particles for details    |   "G" to toggle spatial grid
-Escape to close particle details    |   "P" to save agent state
-                                        
-
+Controls:                                   |   "R" to reset camera
+WASD for movement                           |   "F" to focus on particles center
+Mouse to pan camera                         |   "H" to toggle help overlay
+Left click particles for details (disabled) |   "G" to toggle spatial grid
+Escape to close particle details (disabled) |   "P" to save agent state
 """,
             pos=(10, 30),
             font_size=10,
