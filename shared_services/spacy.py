@@ -63,7 +63,6 @@ def lookup_definition(term):
 def classify_term(token, context=None) -> dict:
     """Enhanced classify_term with input sanitization"""
     try:
-        # SAME SAFETY PATTERN as lookup_definition
         if isinstance(token, tuple):
             text_content = str(token[0]) if token else ""
         elif isinstance(token, dict):

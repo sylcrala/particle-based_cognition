@@ -250,9 +250,9 @@ class LingualParticle(Particle):
             #    return
 
             # Skip if already well-defined
-            if self.lexicon_store.has_deep_entry(token):
-                self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
-                return
+            #if self.lexicon_store.has_deep_entry(token):
+            #    self.log(f"[Learn] Token already deeply stored: {token}", source="LingualParticle", context="learn()")
+            #    return
 
             # Classify and define
             classified = self.ext_res.classify_term(token)
@@ -362,25 +362,11 @@ class LingualParticle(Particle):
                 classified = self.ext_res.classify_term(token)
                 definition, sources = await self.define_term(token, tokens)
 
-                if not await self._store_in_memory(token, definition, classified, sources):
-                    await self.lexicon_store.add_term(
-                        token,
-                        tokens,
-                        definition,
-                            context or "learn",
-                            sources,
-                            classified.get("type", "unknown"),
-                            classified.get("tags", []),
-                            classified.get("intent", "neutral"),
-                            str(self.id),
-                            self.embedding
-                        )
-                    
+                child = await self._store_in_memory(token=token, origin_phrase=tokens, definition=definition, classification=classified, sources=sources, context = "learn")
+                particle.linked_particles["children"].append(str(child.id))
 
                 source=", ".join(sources.keys()) if isinstance(sources, dict) else str(sources)
                 await self.memory_bank.link_token(token, definition, source, particle)
-            
-
 
         await self.memory_bank.update(
             key=f"learn-{int(now)}",
@@ -390,8 +376,6 @@ class LingualParticle(Particle):
             source = "learn_from_particle",
         )
 
-        self.log(f"[Learn] learned about {particle.id} | {particle.type}.", source="LingualParticle", context="learn_from_particle()")
-        
         # Trigger learning moment for knowledge curator (batch learning from particle)
         if self.config.agent_mode == "cog-growth" and len(tokens) > 0:
             await self._trigger_learning_moment_event({
@@ -403,25 +387,16 @@ class LingualParticle(Particle):
                 "context": context
             })
 
+        self.log(f"[Learn] learned about {particle.id} | {particle.type}.", source="LingualParticle", context="learn_from_particle()")
+
 
     async def define_term(self, term, phrase=None):
         defs = await self.ext_res.get_external_definitions(term)
         final_def, sources_used = self.compare_and_merge_definitions(defs)
 
         #await self.reflect_on_def(term, sources_used)
+        #await self.meta_voice.reflect(self)
         return final_def, sources_used or "Definition unavailable."
-
-
-    async def reflect_on_def(self, term, sources):
-        summary = f"I encountered the term '{term}'. SpaCy defines it as: {sources.get('spacy')}"
-        await self.memory_bank.update(
-            key = f"reflect-def-{term}", 
-            value = summary,
-            source = "definition_reflection",
-            source_particle_id=str(self.id),
-            memory_type="lexicon",
-        )
-        self.log(f"[Reflect] {summary}", source = "LingualParticle", context = "reflect_on_def()")
 
 
     def compare_and_merge_definitions(self, def_dict):
@@ -433,26 +408,40 @@ class LingualParticle(Particle):
         return best_def, sources_used
 
 
-    async def _store_in_memory(self, token, definition, classification, sources):
-        context = classification.get("context", "learn")
+    async def _store_in_memory(self, token, origin_phrase=None, definition=None, classification=None, sources=None):
+        context = classification.get("context")
         try:
-            await self.field.spawn_particle(
-                id=None,
-                type="memory",
-                key=token,
-                metadata={
-                    "definitions": definition,
-                    "context": context,
-                    "source": sources,
-                    "term_type": classification["type"],
-                    "tags": classification["tags"],
-                    "intent": classification["intent"],
-                    "updated": time.time()
-                },
-                source_particle_id = str(self.id),
-                emit_event = False
+            particle = await self.memory_bank.update(
+                key = f"lexicon-{token}",
+                value = definition or "No definition available.",
+                source = "lingual_particle",
+                tags = ["lexicon", "definition", "linguistics"],
+                source_particle_id=str(self.id),
+                memory_type="lexicon",
+                metadata = {
+                    "token": token,
+                    "definition": definition,
+                    "classification": classification,
+                    "sources": sources,
+                    "context": context
+                }
             )
-            return True
+            classified = classification or self.ext_res.classify_term(token)
+            
+            await self.lexicon_store.add_term(
+                token,
+                origin_phrase or "Unknown origin",
+                definition,
+                    context or "unknown",
+                    sources,
+                    classified.get("type"),
+                    classified.get("tags"),
+                    classified.get("intent"),
+                    str(self.id),
+                    self.embedding
+                )
+
+            return particle
         except Exception as e:
             self.log(f"Error storing in memory: {e}", source="LingualParticle", context="_store_in_memory()", level="ERROR")
             return False

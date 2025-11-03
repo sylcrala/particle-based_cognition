@@ -181,7 +181,7 @@ class InferenceEngine:
                 max_depth=max_depth,
                 visited=set()
             )
-            
+
             for chain in chains:
                 inference = InferenceChain(chain, reasoning_type="deductive")
                 confidence = inference.calculate_confidence()
@@ -241,7 +241,7 @@ class InferenceEngine:
             paths.append(current_path)
         
         return paths
-    
+
     # ==================== CONTRADICTION DETECTION ====================
     
     async def detect_contradictions(self) -> List[Dict]:

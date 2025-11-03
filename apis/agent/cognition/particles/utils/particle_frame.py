@@ -97,6 +97,9 @@ class Particle:
         ])
 
         self.position = np.concatenate((self.position[:10], np.array(self.phase_vector)))           # adding 12th dimension: phase vector based on circadian phase; see get_phase_vector() below
+        
+        # Store original random position for semantic gravity blending
+        self._original_random_position = self.position.copy()
         self.extra_params = kwargs
         self.creation_index = self.position[3]
         self.vitality = 0.0
@@ -104,8 +107,6 @@ class Particle:
         if self.alive == False:
             self.energy = 0.0
             self.activation = 0.0
-        
-
 
 
     def log(self, message, level = None, context = None, source = None):
@@ -125,7 +126,6 @@ class Particle:
             level = "INFO"
 
         api.call_api("logger", "log", (message, level, context, source))
-
 
     def get_phase_vector(self):
         import math
@@ -211,6 +211,127 @@ class Particle:
             vector = [random.uniform(-1, 1) for _ in range(12)]
             return np.array(vector, dtype=np.float32)
         
+    def get_semantic_content(self):
+        """Extract semantic content for positioning influence"""
+        content = self.metadata.get("content", "")
+        if isinstance(content, dict):
+            # Extract text from structured content
+            text_parts = []
+            for key, value in content.items():
+                if isinstance(value, (str, list)):
+                    if isinstance(value, list):
+                        text_parts.extend([str(item) for item in value])
+                    else:
+                        text_parts.append(str(value))
+            content = " ".join(text_parts)
+        
+        # Add other semantic indicators
+        tags = self.metadata.get("tags", [])
+        context = self.metadata.get("context", "")
+        
+        semantic_text = f"{content} {context} {' '.join(tags) if tags else ''}"
+        return semantic_text.strip() or f"{self.type}_particle"
+    
+    def _apply_semantic_gravity(self, base_position, content=None):
+        """
+        Apply semantic gravity to influence particle positioning
+        Blends random positioning with semantic influence
+        """
+        if not self.config:
+            return base_position
+            
+        semantic_config = self.config.get_semantic_gravity_config()
+        if not semantic_config.get("enabled", False):
+            return base_position
+        
+        # Get semantic content if not provided
+        if content is None:
+            content = self.get_semantic_content()
+        
+        # Store semantic content for adaptive engine to use
+        self.metadata["semantic_content"] = content
+        self.metadata["semantic_ready"] = True
+        
+        try:
+            # Generate semantic positioning vector
+            semantic_vector = self._generate_semantic_position(content)
+            
+            if semantic_vector is not None:
+                # Blend random and semantic positioning
+                random_weight = semantic_config.get("random_weight", 0.6)
+                semantic_weight = semantic_config.get("semantic_weight", 0.4)
+                
+                # Apply semantic influence only to influenceable dimensions
+                influenced_position = base_position.copy()
+                
+                # Dimensions that can be semantically influenced
+                semantic_dims = [0, 1, 2, 6, 7, 8, 10]  # x,y,z,f,m,v,n
+                
+                for dim in semantic_dims:
+                    if dim < len(semantic_vector):
+                        influenced_position[dim] = (
+                            random_weight * base_position[dim] + 
+                            semantic_weight * semantic_vector[dim]
+                        )
+                
+                return influenced_position
+                
+        except Exception as e:
+            self.log(f"Error applying semantic gravity: {e}", "WARNING", "_apply_semantic_gravity")
+        
+        return base_position
+    
+    def _generate_semantic_position(self, content):
+        """
+        Generate a 12D semantic position vector based on content
+        """
+        try:
+            # Use existing embedding system
+            embedding_provider = ParticleLikeEmbedding()
+            semantic_embedding = embedding_provider.encode([content])[0]
+            
+            # Normalize to 12D and appropriate ranges
+            if len(semantic_embedding) > 12:
+                semantic_embedding = semantic_embedding[:12]
+            elif len(semantic_embedding) < 12:
+                semantic_embedding.extend([0.0] * (12 - len(semantic_embedding)))
+            
+            # Normalize values to appropriate ranges for each dimension
+            normalized_vector = np.zeros(12)
+            
+            # Spatial dimensions (x,y,z): normalize to [0,1]
+            for i in range(3):
+                normalized_vector[i] = (semantic_embedding[i] + 1.0) / 2.0  # [-1,1] to [0,1]
+                normalized_vector[i] = np.clip(normalized_vector[i], 0.0, 1.0)
+            
+            # Preserve time dimensions unchanged (w,t,a - indices 3,4,5)
+            normalized_vector[3:6] = self.position[3:6]
+            
+            # Emotional/semantic dimensions: normalize appropriately
+            if len(semantic_embedding) > 6:
+                normalized_vector[6] = np.clip(semantic_embedding[6], -1.0, 1.0)  # f (frequency)
+            if len(semantic_embedding) > 7:
+                normalized_vector[7] = np.clip((semantic_embedding[7] + 1.0) / 2.0, 0.0, 1.0)  # m (memory)
+            if len(semantic_embedding) > 8:
+                normalized_vector[8] = np.clip(semantic_embedding[8], -1.0, 1.0)  # v (valence)
+            
+            # Preserve type identity (i - index 9)
+            normalized_vector[9] = self.position[9]
+            
+            # Intent dimension: semantic influence
+            if len(semantic_embedding) > 10:
+                normalized_vector[10] = np.clip((semantic_embedding[10] + 1.0) / 2.0, 0.0, 1.0)  # n (intent)
+            
+            # Preserve phase vector (indices 11,12 if they exist)
+            if len(self.position) > 11:
+                normalized_vector[11] = self.position[11]
+            
+            return normalized_vector
+            
+        except Exception as e:
+            self.log(f"Error generating semantic position: {e}", "WARNING", "_generate_semantic_position")
+            return None
+
     def _cosine_similarity(self, vec1, vec2):
         """Compute cosine similarity between two vectors"""
         try:

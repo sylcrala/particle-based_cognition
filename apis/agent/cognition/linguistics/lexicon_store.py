@@ -72,9 +72,13 @@ class LexiconStore:
             for token in tokens:
                 if added_count == total_count:
                     break
+
+                definitions = await self.define_term(token)
+                
                 await self.add_term(
                     token=token,
                     context=f"from_particle_{particle.id}",
+                    definitions=definitions,
                     source=f"particle_{particle.type}",
                     term_type="particle_metadata",
                     tags=["particle_learning", f"{particle.type}", "parsed_metadata"],
@@ -90,8 +94,16 @@ class LexiconStore:
                       source="unknown", intent=None, term_type=None, tags=None,
                       scope="external", particle_id=None, particle_embedding=None, **kwargs):
         """Enhanced add_term with Qdrant memory system - maintains all functionality"""
-        
+        if token is None or token.strip() == "":
+            self.logger.log("Cannot add empty token to lexicon", "WARNING", "add_term")
+            return None
+
         try:
+            if isinstance(particle_id, uuid.UUID) or isinstance(particle_id, str):
+                particle_id = str(particle_id)
+            else:
+                particle_id = None
+
             full_phrase = full_phrase or token
             entry_id = f"lex_{uuid.uuid4().hex}"  # Updated ID format for Qdrant
             
@@ -109,7 +121,7 @@ class LexiconStore:
                 "type": term_type,
                 "tags": tags or [],
                 "scope": scope,
-                "source_particle_id": str(particle_id) if particle_id else None,
+                "source_particle_id": particle_id,
                 "strength": 1.0,
                 "decay": 0.97,
                 "context_summary": "",
@@ -124,20 +136,23 @@ class LexiconStore:
             }
 
             # Process definitions with enhanced structure
-            if definitions:
-                if not isinstance(definitions, list):
-                    definitions = [definitions]
-                for definition in definitions:
-                    if isinstance(definition, str):
+            if definitions and isinstance(definitions, list):
+                for def_item in definitions:
+                    if isinstance(def_item, dict):
+                        new_entry["definitions"].append(def_item)
+                    elif isinstance(def_item, str):
                         new_entry["definitions"].append({
-                            "text": definition,
-                            "source": source,
+                            "text": def_item,
+                            "source": "provided",
                             "timestamp": datetime.now().isoformat(),
-                            "confidence": 1.0
+                            "confidence": 0.9
                         })
-                    else:
-                        # Allow complex definition objects
-                        new_entry["definitions"].append(definition)
+
+            #new_definitions = await self.define_term(token)
+            #if isinstance(new_definitions, list):
+            #    for def_item in new_definitions:
+            #        if isinstance(def_item, dict):
+            #            new_entry["definitions"].append(def_item)
 
             # Check for existing term using Qdrant memory system
             existing = None
@@ -161,8 +176,9 @@ class LexiconStore:
                     new_entry[key] = list(set(existing_list + new_list))
                 
                 # Merge definitions
-                existing_defs = existing.get("definitions", [])
-                new_entry["definitions"] = existing_defs + new_entry.get("definitions", [])
+                existing_defs = existing.get("definitions")
+                if existing_defs != []:
+                    new_entry["definitions"] = existing_defs + new_entry.get("definitions")
                 
                 # Update counters and metadata
                 new_entry["times_encountered"] = existing.get("times_encountered", 0) + 1
@@ -171,11 +187,18 @@ class LexiconStore:
                 
                 # Update strength and consciousness based on usage
                 new_entry["strength"] = min(1.0, existing.get("strength", 1.0) + 0.1)
-                new_entry["consciousness_level"] = min(1.0, existing.get("consciousness_level", 0.5) + 0.05)
+                new_entry["consciousness_level"] = min(1.0, existing.get("consciousness_level", 0.5) + 0.025)
 
             # Prepare tags for memory system
             updated_tags = (tags.copy() if tags else [])
             updated_tags.extend(["lingual", f"origin:{token}", "lexicon_entry"])
+
+            # final definition check
+            if new_entry["definitions"] == []:
+                pending = await self.define_term(token)
+                for definition in pending:
+                    new_entry["definitions"].append(definition)
+
             
             # Store in Qdrant memory system with full flexibility
             if self.memory:
@@ -210,6 +233,34 @@ class LexiconStore:
             import traceback
             self.logger.log(f"Add term traceback: {traceback.format_exc()}", "ERROR", "add_term")
             return None
+        
+    async def define_term(self, token):
+        """Use available resources to define a given term"""
+        try:
+            if token is None:
+                return
+            
+            resources = ExternalResources()
+            await self.encounter_existing_term(token)
+            new_definition = await resources.get_external_definitions(term = token)
+            if new_definition:
+                definitions = []
+                for source, definition in new_definition.items():
+                    definitions.append({
+                        "text": definition,
+                        "source": source,
+                        "timestamp": datetime.now().isoformat(),
+                        "confidence": 0.8
+                    })
+
+                return definitions
+            else:
+                self.logger.log(f"No external definitions found for {token}", "INFO", "define_term")
+                return "No definitions found"
+
+        except Exception as e:
+            self.logger.log(f"Error defining term {token}: {e}", "ERROR", "define_term")
+            return None
 
     def has_deep_entry(self, token: str):
         """Check if lexicon has a deep entry for the token"""
@@ -243,6 +294,7 @@ class LexiconStore:
         try:
             # First check local cache for performance
             if token in self.lexicon:
+                await self.encounter_existing_term(token)
                 return self.lexicon[token]
             
             if not self.memory:
@@ -258,15 +310,6 @@ class LexiconStore:
                     self.lexicon[token] = memory
                     return memory
             
-            # Try semantic search as fallback if exact match not found
-            if hasattr(self.memory, 'search_memories'):
-                semantic_results = await self.memory.search_memories(f"lexicon {token}", limit=3)
-                for result in semantic_results:
-                    if (result.get('memory_type') == 'lexicon' and 
-                        result.get('value', {}).get('token') == token):
-                        entry = result['value']
-                        self.lexicon[token] = entry
-                        return entry
             
             return None
             
@@ -279,20 +322,15 @@ class LexiconStore:
         try:
             # Check local cache first
             if term in self.lexicon:
+                await self.encounter_existing_term(term)
                 return self.lexicon[term]["id"]
             
             # Query from memory system
             term_data = await self.get_term(term)
             if term_data:
                 return term_data.get("id")
-            
-            # If not found, attempt to add it
-            self.logger.log(f"Term {term} not found in lexicon, attempting to add it.", "INFO", "get_term_id")
-            added_entry = await self.add_term(term)
-            if added_entry:
-                return added_entry["id"]
-            
-            return None
+
+            return "Term not found"
             
         except Exception as e:
             self.logger.log(f"Error getting term ID for {term}: {e}", "ERROR", "get_term_id")
@@ -326,7 +364,17 @@ class LexiconStore:
         try:
             term_data = await self.get_term(term)
             if term_data:
-                return term_data.get("definitions", [])
+                await self.encounter_existing_term(term)
+                definitions = term_data.get("definitions")
+                if definitions:
+                    return definitions
+                else:
+                    definitions = await self.define_term(term)
+                    await self.add_term( # update term entry w new definitions
+                        token=term,
+                        definitions=definitions
+                    )
+                    return definitions
             
             # If not found, attempt to add it
             self.logger.log(f"Term {term} not found in lexicon, attempting to add it.", "INFO", "get_term_def")
@@ -387,6 +435,7 @@ class LexiconStore:
         """Get term type classification - unchanged functionality"""
         try:
             if term in self.lexicon:
+                asyncio.create_task(self.encounter_existing_term(term))
                 return self.lexicon[term].get('type', 'unknown')
             else:
                 self.logger.log(f"Term {term} not found in lexicon when getting type.", "WARNING", "get_term_type")
@@ -452,7 +501,6 @@ class LexiconStore:
 
                     for token in tokens:  # Process all tokens
                         if token and len(token) > 2:  # Skip short tokens
-                            # Enhanced add_term call with consciousness data
                             result = await self.add_term(
                                 token=token,
                                 context=f"learned_from_particle_{particle.id}",

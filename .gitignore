@@ -8,6 +8,7 @@
 plan.md
 possible_LICENSE.md
 
+.DS_Store
 .venv/
 .pyc
 __pycache__/

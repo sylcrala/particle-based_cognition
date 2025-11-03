@@ -86,9 +86,9 @@ class MainWindow(QMainWindow):
         self.base_layout.addWidget(self.main_widget) # adding to base layout
 
         # set up tabs for stacked layout - tab index listed next to each
-        from gui.utils.visualizer import VisualizerTab
-        from gui.utils.chat import ChatTab
-        from gui.utils.config import ConfigTab
+        from gui.tabs.visualizer.visualizer import VisualizerTab
+        from gui.tabs.chat.chat import ChatTab
+        from gui.tabs.config.config import ConfigTab
         self.diagnostics_tab = QWidget() #0
         self.main_widget.addWidget(self.diagnostics_tab)
         self.analytics_tab = QWidget() #1
@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         self.diagnostics_tab_btn.pressed.connect(lambda: self.switch_tab(0))
         self.analytics_tab_btn = QPushButton("Analytics")
         self.analytics_tab_btn.pressed.connect(lambda: self.switch_tab(1))
-        self.memory_tab_btn = QPushButton("Memory Bank")
+        self.memory_tab_btn = QPushButton("Memories")
         self.memory_tab_btn.pressed.connect(lambda: self.switch_tab(2))
         self.visualizer_tab_btn = QPushButton("Visualizer")
         self.visualizer_tab_btn.pressed.connect(lambda: self.switch_tab(3))

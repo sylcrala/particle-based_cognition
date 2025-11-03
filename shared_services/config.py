@@ -68,6 +68,12 @@ class Config():
             "lambda_blend": 0.5
         }
 
+        self.SEMANTIC_GRAVITY_CONFIG = {
+            "enabled": True,
+            "random_weight": 0.6,
+            "semantic_weight": 0.4
+        }
+
     def get_llm_config(self):
         return self.LLM_CONFIG
 
@@ -76,5 +82,9 @@ class Config():
 
     def get_agent_config(self):
         return self.AGENT_CONFIG
+    
+    def get_semantic_gravity_config(self):
+        return self.SEMANTIC_GRAVITY_CONFIG
+    
 
 api.register_api("config", Config())

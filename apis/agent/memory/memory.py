@@ -302,13 +302,15 @@ class MemoryBank:
         
         # Create temporary query particle
         query_particle = await self.field.spawn_particle(
-            id=None,
             type="lingual",
             metadata={"content": query, "source": "memory_query", "temporary": True},
             energy=0.8,
             activation=0.9,
             emit_event=False
         )
+        if query_particle is None:
+            self.log("Failed to spawn query particle", "ERROR", "quantum_memory_retrieval")
+            return []
         
         relevant_memories = []
         
@@ -338,6 +340,7 @@ class MemoryBank:
         # Clean up temporary particle
         if hasattr(query_particle, 'alive'):
             query_particle.alive = False
+            self.field.remove_particle_with_id(query_particle.id)
         
         return relevant_memories
 

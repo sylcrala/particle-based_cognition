@@ -284,7 +284,7 @@ class MetaVoice:
                     content=output,
                     relationship_type="response_generation"
                 )
-                output_particle.learn_phrase(output, prompt)
+                await output_particle.learn_phrase(output, prompt)
             self.log(f"cog-growth generation: {output}", "DEBUG", context="generate_internal")
             return output
         except Exception as e:
@@ -570,7 +570,7 @@ class MetaVoice:
                         relationship_type="input_processing",
                         context = source or "unknown"
                     )
-                    self.lexicon_store.add_from_particle(particle)
+                    await self.lexicon_store.add_from_particle(particle)
                     return particle
                 else:
                     particle = await self.field.spawn_particle(
@@ -586,21 +586,21 @@ class MetaVoice:
                         source_particle_id=source_particle_id if source_particle_id else None,
                         emit_event=False
                     )
-                    self.lexicon_store.add_from_particle(particle)
+                    await self.lexicon_store.add_from_particle(particle)
                     return particle
             return None
         except Exception as e:
             self.log(f"Error spawning input particle: {e}")
             return None
 
-    async def spawn_and_learn_token(self, tokens, source=None): # TODO: compare to old speak.py similar method
+    async def spawn_and_learn_token(self, tokens, source=None): 
         """Create and learn from token via particle field"""
         try:
             # Ensure overall msg (tokens) is a string
             if not isinstance(tokens, str):
                 tokens = str(tokens)
 
-            # FIXED: Proper string method usage and logic
+            
             # Check if tokens contain separators for splitting
             separators = [" ", ",", "_", "-", ".", "!"]
             should_split = any(sep in tokens for sep in separators)

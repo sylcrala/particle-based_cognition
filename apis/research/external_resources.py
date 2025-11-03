@@ -18,7 +18,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 Additional terms apply per TERMS.md. See also ETHICS.md.
 """
-
+import asyncio
 import re
 from apis.api_registry import api
 
@@ -30,7 +30,6 @@ except ImportError:
     SPACY_AVAILABLE = False
 
 try:
-    import nltk
     from nltk.corpus import wordnet as wn
     WORDNET_AVAILABLE = True
 except ImportError:
@@ -69,17 +68,40 @@ class ExternalResources:
         from shared_services.spacy import classify_term
         if not self.spacy_available:
             self.log("spaCy not available for term classification", "WARNING")
-            return "unknown"
+            return {"type": "unknown", "tags": ["processing_error", "spacy_unavailable"], "intent": None}
         return classify_term(term)
 
     async def get_external_definitions(self, term):
         term_cleaned = re.sub(r"^[_#]+", "", term)
 
+        try:
+            wiki_result = await self.wiki_def(term_cleaned)
+        except Exception as e:
+            self.log(f"Error in wiki_def for {term}: {e}", "ERROR")
+            wiki_result = "No definition found on Wikipedia"
+
         sources = {
             "spacy": self.spacy_def(term_cleaned),
-            #"wikipedia": self.wiki_def(term_cleaned)  # TODO: Implement
+            "wikipedia": wiki_result  # TODO: Implement
         }
         return {k: v for k, v in sources.items() if v}  # Filter out nulls
+
+    async def wiki_def(self, term):
+        """Routes to WikipediaSearcher module for definition retrieval"""
+        wikipedia_api = api.get_api("wikipedia_searcher")
+        if not wikipedia_api:
+            self.log("WikipediaSearcher API not available for wiki definitions", "WARNING")
+            return None
+
+        try:
+            result = await wikipedia_api.quick_search(term)
+            if result and "summary" in result:
+                return result["summary"]
+            else:
+                return None
+        except Exception as e:
+            self.log(f"Error getting Wikipedia definition for {term}: {e}", "ERROR")
+            return None
 
     def get_synonyms(self, term):
         """Returns a list of lowercase synonyms for a given term using WordNet."""

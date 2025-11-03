@@ -57,7 +57,8 @@ class ParticleField:
         self.current_metrics = {}
 
         self.particles = []             # all particles in the field
-        self.alive_particles = set()    # alive/dead filtering
+        self.alive_particles = set()    # alive filtering
+        self.dead_particles = set()     # dead filtering
         self.particle_index = {}        # spatial partitioning for neighbor queries
         self.type_index = {}            # O(1) filtering
         self.collapse_history = {}      # wavelength collapse history 
@@ -137,6 +138,7 @@ class ParticleField:
         if particle:
             particle.alive = False
             self.alive_particles.discard(particle.id)
+            self.dead_particles.add(particle.id)
             self.particles = [p for p in self.particles if p.id != particle_id]
             self._remove_particle_from_grid(particle_id)
             if self.adaptive_engine:
@@ -251,6 +253,17 @@ class ParticleField:
             # Register with adaptive engine
             if self.adaptive_engine:
                 self.adaptive_engine.set_embedding(particle.id, particle.position)
+                
+                # Apply semantic gravity if enabled
+                if hasattr(self.adaptive_engine, 'semantic_gravity_config') and \
+                   self.adaptive_engine.semantic_gravity_config.get("enabled", False):
+                    # Apply semantic gravity to positioning
+                    particle.position = particle._apply_semantic_gravity(particle.position)
+                    # Update embedding after semantic positioning
+                    self.adaptive_engine.set_embedding(particle.id, particle.position)
+                    # Generate semantic embedding
+                    self.adaptive_engine.set_semantic_embedding(particle.id, particle)
+                
                 if AE_policy:
                     self.adaptive_engine.set_policy(particle.id, AE_policy)
             else:
@@ -355,6 +368,7 @@ class ParticleField:
         for p in to_prune:
             p.alive = False
             self.alive_particles.discard(p.id)
+            self.dead_particles.add(p.id)
 
             self._remove_particle_from_grid(p.id)
 
@@ -936,6 +950,107 @@ class ParticleField:
                 self.adaptive_engine.set_embedding(particle.id, particle.position)
 
         #return {"total_energy": self.total_energy, "alive_particles": len(alive_particles)}
+
+    def get_semantic_centroid(self, content_keywords):
+        """
+        Find the semantic centroid of existing related particles
+        for positioning new semantically-related particles
+        """
+        if not self.adaptive_engine or not hasattr(self.adaptive_engine, 'semantic_gravity_config'):
+            return None
+            
+        if not self.adaptive_engine.semantic_gravity_config.get("enabled", False):
+            return None
+            
+        try:
+            related_positions = []
+            keyword_set = set(str(kw).lower() for kw in content_keywords if kw)
+            
+            # Find particles with related semantic content
+            for particle in self.particles:
+                if not particle.alive or particle.id not in self.alive_particles:
+                    continue
+                    
+                # Check if particle has semantic content
+                semantic_content = particle.metadata.get("semantic_content", "")
+                if not semantic_content:
+                    continue
+                
+                # Simple keyword matching
+                content_words = set(semantic_content.lower().split())
+                if keyword_set.intersection(content_words):
+                    related_positions.append(particle.position.copy())
+            
+            # Calculate centroid if we found related particles
+            if related_positions:
+                centroid = np.mean(related_positions, axis=0)
+                self.log(f"Found semantic centroid from {len(related_positions)} related particles", 
+                        "DEBUG", "get_semantic_centroid")
+                return centroid
+            else:
+                self.log("No related particles found for semantic centroid calculation", 
+                        "DEBUG", "get_semantic_centroid")
+                return None
+                
+        except Exception as e:
+            self.log(f"Error calculating semantic centroid: {e}", "WARNING", "get_semantic_centroid")
+            return None
+
+    def get_semantically_similar_particles(self, target_particle, radius=0.5, exclude_visited=None):
+        """Find particles within semantic proximity radius"""
+        if not hasattr(target_particle, 'semantic_embedding'):
+            return []
+        
+        similar = []
+        for particle in self.get_alive_particles():
+            if exclude_visited and particle.id in exclude_visited:
+                continue
+                
+            if hasattr(particle, 'semantic_embedding'):
+                similarity = self.adaptive_engine.calculate_semantic_similarity(
+                    target_particle.semantic_embedding,
+                    particle.semantic_embedding
+                )
+                if similarity > radius:
+                    similar.append(particle)
+        
+        return sorted(similar, key=lambda p: p.semantic_similarity, reverse=True)
+
+    def get_semantic_clusters_near_position(self, position, radius=1.0):
+        """Find semantic clusters within spatial radius"""
+        nearby_particles = self.get_particles_within_radius(position, radius)
+        
+        # Group by semantic similarity
+        clusters = []
+        processed = set()
+        
+        for particle in nearby_particles:
+            if particle.id in processed:
+                continue
+                
+            # Start new cluster
+            cluster_particles = [particle]
+            cluster_queue = [particle]
+            processed.add(particle.id)
+            
+            while cluster_queue:
+                current = cluster_queue.pop(0)
+                similar = self.get_semantically_similar_particles(current, radius=0.7)
+                
+                for similar_particle in similar:
+                    if similar_particle.id not in processed:
+                        cluster_particles.append(similar_particle)
+                        cluster_queue.append(similar_particle)
+                        processed.add(similar_particle.id)
+            
+            if len(cluster_particles) >= 2:  # Valid cluster
+                clusters.append({
+                    "particles": cluster_particles,
+                    "center": self._calculate_cluster_centroid([p.position for p in cluster_particles]),
+                    "dominant_concepts": self._extract_dominant_concepts(cluster_particles)
+                })
+        
+        return clusters
 
     def _get_grid_key(self, position):
         """Convert position to spatial grid key with error handling"""

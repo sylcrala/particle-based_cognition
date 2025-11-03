@@ -144,3 +144,17 @@ class WikipediaSearcher:
         except Exception as e:
             return {"error": str(e)}
 
+    async def quick_search(self, term):
+        """Fetch a brief summary of the term from Wikipedia"""
+        try:
+            summary = wikipedia.summary(term, sentences=3)
+            return {
+                "summary": summary
+            }
+        
+        except wikipedia.exceptions.DisambiguationError as e:
+            # multiple results - send for internal processing
+            return {"disambiguation": e.options}
+        
+        except Exception as e:
+            return {"error": str(e)}

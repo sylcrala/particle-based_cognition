@@ -46,6 +46,11 @@ class AdaptiveDistanceEngine:
         self.base_metric_fn = self.get_base_metric(ae_config["base_metric"])
         self.memory = {}  # (id_a, id_b): interaction_score
         self.embeddings = {}  # id: xp.array (cupy or numpy)
+        
+        # Semantic gravity system
+        self.semantic_gravity_config = config.get_semantic_gravity_config() if config else {}
+        self.semantic_embeddings = {}  # id: semantic embedding vector
+        self.semantic_centroids = {}  # content_type: centroid position
 
         self.agent_config = config.get_agent_config() if config else {}
 
@@ -117,6 +122,35 @@ class AdaptiveDistanceEngine:
 
     def set_embedding(self, node_id, vector):
         self.embeddings[node_id] = np.array(vector)
+    
+    def set_semantic_embedding(self, node_id, particle):
+        """
+        Generate and store semantic embedding for a particle
+        """
+        if not self.semantic_gravity_config.get("enabled", False):
+            return
+            
+        try:
+            # Get semantic content from particle
+            semantic_content = particle.metadata.get("semantic_content")
+            if not semantic_content:
+                return
+            
+            # Generate semantic embedding using existing embedding system
+            from apis.agent.utils.embedding import ParticleLikeEmbedding
+            embedding_generator = ParticleLikeEmbedding()
+            semantic_vector = embedding_generator.encode([semantic_content])[0]
+            
+            # Store semantic embedding (12D to match particle positions)
+            if len(semantic_vector) > 12:
+                semantic_vector = semantic_vector[:12]
+            elif len(semantic_vector) < 12:
+                semantic_vector.extend([0.0] * (12 - len(semantic_vector)))
+            
+            self.semantic_embeddings[node_id] = np.array(semantic_vector, dtype=np.float32)
+            
+        except Exception as e:
+            self.log(f"Error generating semantic embedding for {node_id}: {e}", "WARNING", "set_semantic_embedding")
 
 
     def update_interaction(self, id_a, id_b, success_score):
@@ -163,6 +197,14 @@ class AdaptiveDistanceEngine:
     def distance(self, id_a, pos_a, id_b, pos_b):
         base = self.base_metric_fn(pos_a, pos_b)
         adaptive = self.adaptive_component(id_a, id_b)
+        
+        # Apply semantic gravity if enabled
+        if self.semantic_gravity_config.get("enabled", False):
+            semantic_influence = self.calculate_semantic_influence(id_a, id_b, pos_a, pos_b)
+            
+            # Blend base distance with semantic influence
+            semantic_weight = self.semantic_gravity_config.get("semantic_weight", 0.4)
+            base = base * (1.0 - semantic_weight) + semantic_influence * semantic_weight
 
         if self.mode == "base":
             return base
@@ -186,6 +228,74 @@ class AdaptiveDistanceEngine:
         magnitude = np.array(force_scale, dtype=np.float32) / dist
 
         return norm_direction * magnitude
+        
+    def calculate_semantic_influence(self, id_a, id_b, pos_a, pos_b):
+        """
+        Calculate semantic influence on distance between two particles
+        Returns modified distance based on semantic similarity
+        """
+        try:
+            # Get semantic embeddings
+            semantic_a = self.semantic_embeddings.get(id_a)
+            semantic_b = self.semantic_embeddings.get(id_b)
+            
+            if semantic_a is None or semantic_b is None:
+                return self.base_metric_fn(pos_a, pos_b)  # Fallback to base distance
+            
+            # Calculate semantic distance
+            semantic_distance = self.base_metric_fn(semantic_a, semantic_b)
+            
+            # Calculate positional distance
+            position_distance = self.base_metric_fn(pos_a, pos_b)
+            
+            # Semantic gravity: related concepts attract (lower distance)
+            # Dissimilar concepts repel (higher distance)
+            max_semantic_distance = np.linalg.norm(semantic_a) + np.linalg.norm(semantic_b)
+            if max_semantic_distance > 0:
+                similarity_factor = 1.0 - (semantic_distance / max_semantic_distance)
+                
+                # Apply attraction/repulsion
+                # High similarity (similarity_factor close to 1) = strong attraction (multiply by < 1)
+                # Low similarity (similarity_factor close to 0) = weak repulsion (multiply by > 1)
+                gravity_factor = 0.5 + (0.5 * (1.0 - similarity_factor))
+                
+                return position_distance * gravity_factor
+            
+            return position_distance
+            
+        except Exception as e:
+            self.log(f"Error in semantic influence calculation: {e}", "WARNING", "calculate_semantic_influence")
+            return self.base_metric_fn(pos_a, pos_b)
+    
+    def get_semantic_centroid(self, content_keywords):
+        """
+        Find semantic centroid of existing particles with related content
+        """
+        if not self.semantic_gravity_config.get("enabled", False):
+            return None
+            
+        try:
+            related_embeddings = []
+            related_positions = []
+            
+            # Find particles with similar semantic content
+            for node_id, semantic_embedding in self.semantic_embeddings.items():
+                # Simple keyword matching (can be enhanced)
+                particle_position = self.embeddings.get(node_id)
+                if particle_position is not None:
+                    related_embeddings.append(semantic_embedding)
+                    related_positions.append(particle_position)
+            
+            if not related_positions:
+                return None
+                
+            # Calculate centroid
+            centroid = np.mean(related_positions, axis=0)
+            return centroid
+            
+        except Exception as e:
+            self.log(f"Error calculating semantic centroid: {e}", "WARNING", "get_semantic_centroid")
+            return None
 
     def compare_text_to_particle(self, text: str, particle) -> float:
         """
