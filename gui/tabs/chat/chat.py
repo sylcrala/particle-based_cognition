@@ -52,10 +52,10 @@ class ChatTab(QWidget):
 
         # set up utility components
         # TODO
-        self.utility_layout.addWidget(QLabel("TODO: finish this"))
+        self.utility_layout.addWidget(QLabel("TODO:"))
         self.utility_layout.addWidget(QLabel("maybe ability to view chat history?"))
         self.utility_layout.addWidget(QLabel("or configure chat settings?"))
-        self.utility_layout.addWidget(QLabel("also don't forget to finish the chat tab, send_message isn't tied together"))
+        self.utility_layout.addWidget(QLabel("Disclaimer: There's a slight issue with the communications pipeline after the latest updates with linguistic processing, so responses may be delayed or not appear at all. This will be fixed in the next update."))
 
 
     def send_message(self):
