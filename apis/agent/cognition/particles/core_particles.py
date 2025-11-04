@@ -127,7 +127,7 @@ class CoreParticle(Particle):
             persistence_lvl="temporary",
             emit_event=False
         )
-        temp_core.source_particle_id = str(self.id)
+        temp_core.source_particle_id = self.id
         temp_core.metadata["context"] = context
         return temp_core
 
@@ -239,7 +239,7 @@ class CoreParticle(Particle):
                 self._log_decision(f"Wikipedia context lookup failed: {e}", "DEBUG")
 
             # generate via meta voice directly
-            result = await self.meta_voice.generate(prompt=user_message, source="user_input", source_particle_id=str(self.id))
+            result = await self.meta_voice.generate(prompt=user_message, source="user_input", source_particle_id=self.id)
 
             self._update_decision_history(event, result=result)
             self._log_decision(f"Processed user interaction: {user_message}", level="INFO")
@@ -306,7 +306,7 @@ class CoreParticle(Particle):
                 activation=0.3,
             )
             if sensory_p:
-                sensory_p.source_particle_id = str(self.id)
+                sensory_p.source_particle_id = self.id
                 self.managed_particles += [sensory_p.id]
 
                 sensory_p.process_environmental_input(
@@ -421,7 +421,7 @@ class CoreParticle(Particle):
                             },
                             energy=0.7,
                             activation=0.6,
-                            source_particle_id=str(self.id),
+                            source_particle_id=self.id,
                             emit_event=False
                         )
                         
@@ -530,7 +530,7 @@ class CoreParticle(Particle):
                             },
                             energy=0.7,
                             activation=0.6,
-                            source_particle_id=str(self.id),
+                            source_particle_id=self.id,
                             emit_event=False
                         )
                         if memory_particle:
@@ -745,7 +745,7 @@ class CoreParticle(Particle):
                         },
                         energy=0.7,
                         activation=0.6,
-                        source_particle_id=str(self.id),
+                        source_particle_id=self.id,
                         emit_event=False
                     )
                     
@@ -821,7 +821,7 @@ class CoreParticle(Particle):
                     },
                     energy=0.7 + (novelty_score * 0.3),  # Higher energy for more novel concepts
                     activation=0.6,
-                    source_particle_id=str(self.id),
+                    source_particle_id=self.id,
                     emit_event=False
                 )
                 
@@ -1127,7 +1127,7 @@ class CoreParticle(Particle):
                     },
                     energy=0.3,
                     activation=0.4,
-                    source_particle_id=str(self.id),
+                    source_particle_id=self.id,
                     emit_event=False
                 )
                 

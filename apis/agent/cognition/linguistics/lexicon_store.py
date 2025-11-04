@@ -23,10 +23,9 @@ import uuid
 import string
 from datetime import datetime
 import asyncio
-import json
+import random
 
 from apis.api_registry import api
-from apis.research.external_resources import ExternalResources
 
 
 class LexiconStore:
@@ -69,16 +68,17 @@ class LexiconStore:
             tokens = self.custom_tokenizer(content)
             total_count = len(tokens)
             added_count = 0
+
             for token in tokens:
-                if added_count == total_count:
+                if added_count == total_count or added_count >= 20: # limit to 20 terms per particle to prevent overloading
                     break
 
-                definitions = await self.define_term(token)
+                if random.random() < 0.5:  # 50% chance to skip - helps prevent only initial terms being added
+                    continue
                 
                 await self.add_term(
                     token=token,
                     context=f"from_particle_{particle.id}",
-                    definitions=definitions,
                     source=f"particle_{particle.type}",
                     term_type="particle_metadata",
                     tags=["particle_learning", f"{particle.type}", "parsed_metadata"],
@@ -99,14 +99,10 @@ class LexiconStore:
             return None
 
         try:
-            if isinstance(particle_id, uuid.UUID) or isinstance(particle_id, str):
-                particle_id = str(particle_id)
-            else:
-                particle_id = None
-
             full_phrase = full_phrase or token
             entry_id = f"lex_{uuid.uuid4().hex}"  # Updated ID format for Qdrant
-            
+            particle_id_for_entry = str(particle_id.item()) if particle_id is not None and hasattr(particle_id, 'size') and particle_id.size > 0 and not isinstance(particle_id, uuid.UUID) else str(particle_id) if particle_id is not None else None
+
             # Create comprehensive lexicon entry - now with full Qdrant flexibility
             new_entry = {
                 "token": token,
@@ -121,7 +117,7 @@ class LexiconStore:
                 "type": term_type,
                 "tags": tags or [],
                 "scope": scope,
-                "source_particle_id": particle_id,
+                "source_particle_id": particle_id_for_entry,
                 "strength": 1.0,
                 "decay": 0.97,
                 "context_summary": "",
@@ -147,12 +143,6 @@ class LexiconStore:
                             "timestamp": datetime.now().isoformat(),
                             "confidence": 0.9
                         })
-
-            #new_definitions = await self.define_term(token)
-            #if isinstance(new_definitions, list):
-            #    for def_item in new_definitions:
-            #        if isinstance(def_item, dict):
-            #            new_entry["definitions"].append(def_item)
 
             # Check for existing term using Qdrant memory system
             existing = None
@@ -193,9 +183,9 @@ class LexiconStore:
             updated_tags = (tags.copy() if tags else [])
             updated_tags.extend(["lingual", f"origin:{token}", "lexicon_entry"])
 
-            # final definition check
-            if new_entry["definitions"] == []:
-                pending = await self.define_term(token)
+            # final definition check - if no definition, attempt quick define
+            if len(new_entry["definitions"]) == 0:
+                pending = await self.quick_define(token)
                 for definition in pending:
                     new_entry["definitions"].append(definition)
 
@@ -208,7 +198,7 @@ class LexiconStore:
                     source=source,
                     tags=updated_tags,
                     memory_type="lexicon",  # This routes to lexicon collection
-                    source_particle_id=str(particle_id),
+                    source_particle_id=particle_id,
                     consciousness_level=new_entry.get("consciousness_level", 0.5),
                     **kwargs  # Pass through any additional metadata
                 )
@@ -223,7 +213,7 @@ class LexiconStore:
             self.lexicon[token] = new_entry
             
             # Set embedding in adaptive engine if provided
-            if particle_embedding and self.adaptive_engine:
+            if particle_embedding is not None and self.adaptive_engine:
                 self.adaptive_engine.set_embedding(entry_id, particle_embedding)
             
             return new_entry
@@ -234,33 +224,33 @@ class LexiconStore:
             self.logger.log(f"Add term traceback: {traceback.format_exc()}", "ERROR", "add_term")
             return None
         
-    async def define_term(self, token):
-        """Use available resources to define a given term"""
+    async def quick_define(self, token: str = None):
+        """Quick definition fetcher via direct external resource spacy query - non-blocking"""
         try:
             if token is None:
-                return
+                return "No token provided for quick definition"
             
-            resources = ExternalResources()
-            await self.encounter_existing_term(token)
-            new_definition = await resources.get_external_definitions(term = token)
-            if new_definition:
-                definitions = []
-                for source, definition in new_definition.items():
-                    definitions.append({
-                        "text": definition,
-                        "source": source,
-                        "timestamp": datetime.now().isoformat(),
-                        "confidence": 0.8
-                    })
+            resources = api.get_api("external_resources")
+            if token in self.lexicon:
+                await self.encounter_existing_term(token)
+            new_definition = await resources.wn_quick_def(token)
 
-                return definitions
+            if new_definition:
+                self.logger.log(f"Quick definition found for {token}: {new_definition}", "INFO", "quick_define")
+                definition_entry = {
+                    "text": new_definition,
+                    "source": "quick_spacy",
+                    "timestamp": datetime.now().isoformat(),
+                    "confidence": 0.6
+                }
+                return definition_entry
             else:
-                self.logger.log(f"No external definitions found for {token}", "INFO", "define_term")
-                return "No definitions found"
+                self.logger.log(f"No quick definition found for {token}", "INFO", "quick_define")
+                return "No quick definition found"
 
         except Exception as e:
-            self.logger.log(f"Error defining term {token}: {e}", "ERROR", "define_term")
-            return None
+            self.logger.log(f"Error in quick defining term {token}: {e}", "ERROR", "quick_define")
+            return "Error retrieving quick definition"
 
     def has_deep_entry(self, token: str):
         """Check if lexicon has a deep entry for the token"""
@@ -309,7 +299,6 @@ class LexiconStore:
                     # Update local cache
                     self.lexicon[token] = memory
                     return memory
-            
             
             return None
             
@@ -369,21 +358,14 @@ class LexiconStore:
                 if definitions:
                     return definitions
                 else:
-                    definitions = await self.define_term(term)
-                    await self.add_term( # update term entry w new definitions
-                        token=term,
-                        definitions=definitions
-                    )
-                    return definitions
+                    definition = await self.quick_define(term)
+                    self.lexicon["term"]["definitions"].append(definition)
+                    return definition
             
-            # If not found, attempt to add it
-            self.logger.log(f"Term {term} not found in lexicon, attempting to add it.", "INFO", "get_term_def")
-            added_entry = await self.add_term(term)
-            if added_entry:
-                return added_entry.get("definitions", [])
-            
-            return f"Term not found in lexicon: {term} | skipping term"
-            
+            if term not in self.lexicon:
+                # If not found, attempt to add it
+                self.logger.log(f"Term {term} not found in lexicon", "INFO", "get_term_def")
+
         except Exception as e:
             self.logger.log(f"Error getting definition for {term}: {e}", "ERROR", "get_term_def")
             return f"Error retrieving definition for: {term}"

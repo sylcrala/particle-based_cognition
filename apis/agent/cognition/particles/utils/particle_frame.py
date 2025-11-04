@@ -75,7 +75,7 @@ class Particle:
         
         # Particle linkage system for cognitive mapping
         self.linked_particles = {"source": None, "children": [], "ghost": []}  # Track relationships: {"source": id, "children": [ids]}
-        self.source_particle_id:str = None
+        self.source_particle_id:uuid = None
 
         self.w = dt.datetime.now().timestamp() # pulling time of creation
         self.t = self.w                        # localized time (updated each update cycle)
@@ -884,7 +884,7 @@ class Particle:
             metadata=metadata,
             energy=energy,
             activation=activation,
-            source_particle_id=str(self.id),  # Creates genealogy linkage
+            source_particle_id=self.id,  # Creates genealogy linkage
             emit_event=False
         )
         self.linked_particles["children"].append(particle.id)

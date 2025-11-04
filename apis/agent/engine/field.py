@@ -199,7 +199,7 @@ class ParticleField:
                 if source_particle and source_particle.alive and source_particle.id in self.alive_particles:
                     # Valid linkage - proceed with linking
                     particle.linked_particles["source"] = source_particle_id
-                    particle.source_particle_id = str(source_particle_id)
+                    particle.source_particle_id = source_particle_id
                     
                     # Also update the source particle to know about this child
                     if 'children' not in source_particle.linked_particles:

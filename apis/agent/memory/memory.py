@@ -382,7 +382,7 @@ class MemoryBank:
             return {"error": str(e), "raw_payload_keys": list(payload.keys()) if isinstance(payload, dict) else "invalid"}
 
     async def update(self, key: str, value: Any, source: str = None, tags: List[str] = None, 
-                    memory_type: str = None, source_particle_id: str = None, 
+                    memory_type: str = None, source_particle_id= None, 
                     links: List[str] = None, **kwargs) -> Optional[Any]:
         """Store any data structure with complete flexibility - no restrictions!"""
         try:
@@ -405,7 +405,6 @@ class MemoryBank:
                 }
                 
                 memory_particle = await self.field.spawn_particle(
-                    id=None,
                     type="memory",
                     metadata=memory_metadata,
                     source_particle_id=source_particle_id,
@@ -415,7 +414,8 @@ class MemoryBank:
                 if not memory_particle:
                     self.log("Failed to spawn memory particle", "WARNING", "update")
             
-            self.log("[Memory Update] checkpoint 1", "DEBUG", "update")
+            # debug
+            #self.log("[Memory Update] checkpoint 1", "DEBUG", "update")
             
             # Generate unique point ID
             point_id = int(uuid.uuid4())
@@ -446,7 +446,8 @@ class MemoryBank:
 
             payload = self._sanitize_payload(raw_payload)
             
-            self.log("[Memory Update] checkpoint 2", "DEBUG", "update")
+            # debug
+            #self.log("[Memory Update] checkpoint 2", "DEBUG", "update")
             
             # Generate embedding for semantic search
             if isinstance(value, dict):
@@ -478,7 +479,7 @@ class MemoryBank:
                 self.log(f"Memory '{key}' stored successfully in Qdrant (ID: {point_id})", 
                         "INFO", "update")
                 
-                self.log("[Memory Update] checkpoint 3 - Success", "DEBUG", "update")
+                #self.log("[Memory Update] checkpoint 3 - Success", "DEBUG", "update")
                 
                 # Update particle with Qdrant point ID
                 if memory_particle and hasattr(memory_particle, 'metadata'):

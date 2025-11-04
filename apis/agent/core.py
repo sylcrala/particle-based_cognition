@@ -656,7 +656,7 @@ class AgentAnchor:
                 metadata=particle_data.get("metadata", {}),
                 energy=particle_data.get("energy", 0.5),
                 activation=particle_data.get("activation", 0.5),
-                source_particle_id=str(core_particle.id) if core_particle else None,
+                source_particle_id=core_particle.id if core_particle else None,
                 emit_event=False  # Avoid recursive event emission
             )
             self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}", "DEBUG", context="handle_particle_created")
@@ -699,7 +699,7 @@ class AgentAnchor:
             if field:
                 try:
                     input_for_agent = f"{user_name} said: <s>{user_data}</s>"
-                    result = await field.inject_action(input_for_agent, source="user_input", source_particle_id=str(core_particle.id) if core_particle else None)
+                    result = await field.inject_action(input_for_agent, source="user_input", source_particle_id=core_particle.id if core_particle else None)
                     
                     if result:
                         self.log(f"User input processed, response generated: {result}", "DEBUG", context="handle_user_input")

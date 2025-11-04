@@ -66,7 +66,7 @@ class MemoryParticle(Particle):
                     source="memory_particle_update",
                     tags=self.metadata.get("tags", []) + ["updated"],
                     memory_type=self.memory_type,
-                    source_particle_id=str(self.id),
+                    source_particle_id=self.id,
                     consciousness_level=min(1.0, self.consciousness_level + 0.1),  # Boost on update
                     energy_level=self.energy,
                     activation_level=self.activation,
@@ -165,7 +165,7 @@ class MemoryParticle(Particle):
                     source="memory_particle_reflection",
                     tags=["reflection", "memory_analysis", self.memory_type],
                     memory_type="reflection",
-                    source_particle_id=str(self.id),
+                    source_particle_id=self.id,
                     consciousness_level=min(1.0, self.consciousness_level + 0.2),
                     reflection_depth=len(related),
                     parent_memory_id=str(self.id)
@@ -207,7 +207,7 @@ class MemoryParticle(Particle):
                 metadata=metadata,
                 energy=energy,
                 activation=activation,
-                source_particle_id=str(self.id),
+                source_particle_id=self.id,
                 emit_event=True
             )
             

@@ -90,6 +90,7 @@ class CognitionLoop:
             
             await self.events.emit_event("system_events", "system_metrics request", source="perform_maintenance_cycle")
 
+            # TODO: add linguistic development here, process definition parsing during downtime
 
             # consolidate memories
             await self.events.emit_event("memory_event", "memory_consolidation", source="perform_maintenance_cycle")

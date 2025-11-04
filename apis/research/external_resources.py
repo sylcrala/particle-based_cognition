@@ -46,23 +46,6 @@ class ExternalResources:
             self.logger.log(message, level, "ExternalResources", "ExternalResources")
         else:
             print(f"[ExternalResources] {message}")
-
-    def spacy_def(self, term):
-        """Get definition from spaCy if available"""
-        if not self.spacy_available:
-            return None
-        
-        try:
-            nlp = spacy.load("en_core_web_sm")
-            doc = nlp(term)
-            if doc and doc[0].has_vector:
-                term_def = f"{term}: {doc[0].text} (vector length: {len(doc[0].vector)})"
-                return term_def
-            else:
-                return "No definition found / no vector available"
-        except Exception as e:
-            self.log(f"Error getting spaCy definition for {term}: {e}", "ERROR")
-            return None
         
     def classify_term(self, term):
         from shared_services.spacy import classify_term
@@ -80,9 +63,16 @@ class ExternalResources:
             self.log(f"Error in wiki_def for {term}: {e}", "ERROR")
             wiki_result = "No definition found on Wikipedia"
 
+        try:
+            wn_result = await self.wordnet_def(term_cleaned)
+        except Exception as e:
+            self.log(f"Error in wordnet definition gathering for {term}: {e}", "ERROR")
+            wn_result = None
+
         sources = {
-            "spacy": self.spacy_def(term_cleaned),
-            "wikipedia": wiki_result  # TODO: Implement
+            "spacy": self.classify_term(term_cleaned),
+            "wikipedia": wiki_result,
+            "wordnet": wn_result 
         }
         return {k: v for k, v in sources.items() if v}  # Filter out nulls
 
@@ -102,7 +92,42 @@ class ExternalResources:
         except Exception as e:
             self.log(f"Error getting Wikipedia definition for {term}: {e}", "ERROR")
             return None
+        
+    async def wn_quick_def(self, term):
+        """Returns the first available WordNet definition for a given term."""
+        if not self.wordnet_available:
+            self.log(f"WordNet not available for definition lookup: {term}", "WARNING")
+            return None
+        try:
+            synsets = wn.synsets(term)
+            if synsets:
+                return synsets[0].definition()
+            return None
 
+        except Exception as e:
+            self.log(f"Error getting WordNet definition for {term}: {e}", "ERROR")
+            return None
+
+    async def wordnet_def(self, term):
+        """Returns the available wordnet definitions for a given term."""
+        if not self.wordnet_available:
+            self.log(f"WordNet not available for definition lookup: {term}", "WARNING")
+            return None
+        try:
+            synsets = wn.synsets(term)
+            if synsets:
+                definitions = []
+                for synset in synsets:
+                    pos_map = {'n': 'noun', 'v': 'verb', 'a': 'adj', 'r': 'adv', 's': 'adj'}
+                    pos = pos_map.get(synset.pos(), synset.pos())
+                    definitions.append(f"({pos}) {synset.definition()}")
+                return definitions
+            return None
+
+        except Exception as e:
+            self.log(f"Error getting WordNet definition for {term}: {e}", "ERROR")
+            return None
+        
     def get_synonyms(self, term):
         """Returns a list of lowercase synonyms for a given term using WordNet."""
         if not self.wordnet_available:

@@ -19,4 +19,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 Additional terms apply per TERMS.md. See also ETHICS.md.
 """
 
-# TODO
+from apis.api_registry import api
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton
+)
+from PyQt6.QtGui import QPalette
+from PyQt6.QtCore import QTimer
+
+class LogsTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # foundation
+        self.base_layout = QVBoxLayout()
+        self.setLayout(self.base_layout)
+        self.bar_layout = QHBoxLayout()
+        self.base_layout.addLayout(self.bar_layout, stretch=1)
+        self.content_layout = QHBoxLayout()
+        self.base_layout.addLayout(self.content_layout, stretch=10)
+        
+        # set up content area 
+        self.log_dir_viewer_layout = QVBoxLayout()
+        self.file_viewer_layout = QVBoxLayout()
+        self.content_layout.addLayout(self.log_dir_viewer_layout, stretch=3)
+        self.content_layout.addLayout(self.file_viewer_layout, stretch=7)
+
+        # set up bar
+        # add buttons and controls here, especially ability to open a pop-up live log stream window
+
+        
+

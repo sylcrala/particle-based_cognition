@@ -6,6 +6,8 @@
  - internal operations fully self-directed
  - ability to trigger external operations autonomously
 
+### (GUI) Visualizer tab
+ - update VisualizerCanvas to operate on a dedicated thread, similar to the cognition engine itself - the hope is to alleviate the currently seen GUI stuttering and freezing that occurs under medium-to-heavy particle field load
 
 ### (GUI) Diagnostics tab
 TBD

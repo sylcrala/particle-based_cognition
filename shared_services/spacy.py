@@ -40,8 +40,7 @@ def log(message, level = None, context = None):
 
     api.call_api("logger", "log", (message, level, context, source))
 
-
-def lookup_definition(term):
+def analyze(term):
     try:
         if isinstance(term, tuple):
             text_content = str(term[0])
@@ -125,6 +124,9 @@ def classify_term(token, context=None) -> dict:
                 tags.append("expressive")
             if "internal" in str(context):
                 tags.append("internal_thought")
+            if "user_input" in str(context):
+                tags.append("user_input")
+            
 
         log(f"Classified term '{text_content}' with context '{context}': {term_type}, {tags}", 
             level="DEBUG", context="classify_term()")

@@ -800,7 +800,7 @@ class MetaVoice:
                         links=[str(particle.id), str(response_particle.id)] if particle else [str(response_particle.id)],
                         tags=["reflection", "internal"],
                         source="internal_reflection",
-                        source_particle_id=str(response_particle.id)
+                        source_particle_id=response_particle.id
                     )
             except Exception as e:
                 self.log(f"Memory update error: {e}")

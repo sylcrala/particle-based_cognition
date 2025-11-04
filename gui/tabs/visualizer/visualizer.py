@@ -19,8 +19,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 Additional terms apply per TERMS.md. See also ETHICS.md.
 """
 
-import os
-import sys
 from apis.api_registry import api
 import colorsys
 
@@ -54,17 +52,14 @@ from PyQt6.QtWidgets import (
     QPushButton
 )
 from PyQt6.QtGui import QPalette
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from vispy import app
 app.use_app('pyqt6')
 from vispy import scene
 from vispy.scene.visuals import Text, XYZAxis, Line, Markers, GridLines
-from pathlib import Path
-import asyncio
 import numpy as np
-import math
-import threading
 import datetime as dt
+import threading
 
 
 class VisualizerTab(QWidget):
@@ -76,10 +71,10 @@ class VisualizerTab(QWidget):
         # set layout
         self.base_layout = QVBoxLayout()
         self.setLayout(self.base_layout)
-        self.content_layout = QStackedLayout()
-        self.base_layout.addLayout(self.content_layout, stretch=10)
         self.bar_layout = QHBoxLayout()
         self.base_layout.addLayout(self.bar_layout, stretch=1)
+        self.content_layout = QStackedLayout()
+        self.base_layout.addLayout(self.content_layout, stretch=10)
         
         """
         # set palette
@@ -136,6 +131,9 @@ class VisualizerCanvas(scene.SceneCanvas):
         self.logger = api.get_api("logger")
         self.visualizer_enabled = False # flag to enable the visualizer - default is False to prevent ghost API calls, must be enabled in app via a button or toggle
         self.agent_ready = False
+
+        # TODO add dedicated thread for visualizer canvas to prevent GUI hanging when under heavy canvas load
+
         scene.SceneCanvas.__init__(self, keys="interactive", bgcolor="white") #bgcolor=(0.01, 0.01, 0.03, 1.0)
         self.unfreeze()
 
