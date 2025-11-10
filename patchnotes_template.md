@@ -1,4 +1,4 @@
-## Instrutions for generating patchnotes
+## Instrutions for generating patchnotes (these are for Copilot mainly)
 
 Use the following guidelines and templates while generating patchnotes between commits:
 
@@ -10,4 +10,4 @@ All patchnotes go in the git commit message, seperate into sections per file wit
 
 Under each section name (listed above), create a list of major changes (additions, changes, deletions)
 
-Keep the patchnotes concise and clean, do not add any emojis please - 
+Keep the patchnotes concise and clean, do not add any emojis please
