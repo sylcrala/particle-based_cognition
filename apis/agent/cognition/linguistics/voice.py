@@ -61,7 +61,9 @@ class MetaVoice:
         self.config = api.get_api("config")
         self.agent_config = self.config.get_agent_config() if self.config else {}
         self.agent_name = self.config.agent_name
+        self.user_name = self.config.user_name
         
+        self._recently_processed = set()
         self.chat_history = []
         self.thoughts = []
 
@@ -85,7 +87,6 @@ class MetaVoice:
         
     async def generate_internal(self, prompt: str, source: str, context_particles = None, tags = None, source_particle_id = None) -> str:
         """Generate response using internal thought process and linguistic capabilities - depends on agent growth and knowledge gained over time - used exclusively for cog-growth mode"""
-        # TODO: implement this fully - compare old speak.py voice generation from original ARIS project (see "REVIEW_FOR_INTEGRATION" dir) and salvage relevant parts for merge
         input_source = str(source)
         if tags:
             gentags = [tag for tag in (tags or []) if isinstance(tag, str)] + ["user_input" if source == "user_input" else "internal_thought"]
@@ -109,19 +110,8 @@ class MetaVoice:
                 input_particle.metadata["needs_attention"] = True
                 self.log(f"User interaction triggered {len(collapse_log)} particle collapses and refocused conscious attention")
         else:
-            input_particle = await self.field.spawn_particle(
-                type="lingual",
-                metadata={
-                    "content": prompt,
-                    "source": input_source,
-                    "timestamp": time(),
-                    "processing_type": "internal"
-                },
-                energy=0.6,
-                activation=0.5,
-                source_particle_id=source_particle_id if source_particle_id else None,
-                emit_event=False
-            )
+            input_particle = await self.process_thought(prompt, input_source, source_particle_id)
+
 
         # Trigger contextual collapse for internal processing
         if self.field and input_particle:
@@ -150,7 +140,7 @@ class MetaVoice:
             except Exception as e:
                 self.log(f"Failed to trigger reasoning cycle: {e}", "WARNING", context="generate_internal")
 
-        self.log(f"DEBUG: children type: {type(input_particle.linked_particles.get("children", []))}", "DEBUG")
+        #self.log(f"DEBUG: children type: {type(input_particle.linked_particles.get("children", []))}", "DEBUG")
 
         # build full context list and generate seed base
         if context_particles is not None:
@@ -202,7 +192,7 @@ class MetaVoice:
         memories = []
         memory_phrases = []
         if self.memory_bank:
-            memories = await self.memory_bank.quantum_memory_retrieval(prompt)
+            memories = await self.memory_bank.quantum_memory_retrieval(prompt, collapse_threshold=0.5)
             for mem in memories:
                 if isinstance(mem, dict):
                     content = mem.get("value", {})
@@ -286,10 +276,27 @@ class MetaVoice:
                 )
                 await output_particle.learn_phrase(output, prompt)
             self.log(f"cog-growth generation: {output}", "DEBUG", context="generate_internal")
+            
+            # Observe agent communication for background semantic gravity analysis
+            if self.memory_bank and self.memory_bank.agent_categorizer:
+                try:
+                    # FIXED: Separate user input context from Iris's response content  
+                    context_data = {
+                        "trigger_context": prompt,  # Original user input (human language)
+                        "response_content": output,  # Iris's actual response (may contain compressed language)
+                        "usage_context": "agent_response" if source == "user_input" else "internal_thought",
+                        "response_type": "cog_growth_internal",
+                        "content_type": "iris_response"  # Flag as Iris's generated content
+                    }
+                    await self.memory_bank.agent_categorizer.observe_agent_communication(output, context_data)
+                    self.log(f"Agent communication observed for semantic analysis: {output[:50]}... (responding to: {prompt[:30]}...)", "DEBUG", context="generate_internal")
+                except Exception as e:
+                    self.log(f"Error observing agent communication: {e}", "WARNING", context="generate_internal")
+            
             return output
         except Exception as e:
-            self.log(f"Internal generation error: {e}")
-            self.log(f"Full traceback:\n{traceback.format_exc()}")
+            self.log(f"Internal generation error: {e}", "ERROR", context="generate_internal")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="generate_internal")
             return "[Error: Internal generation failed]"
 
         
@@ -391,14 +398,32 @@ class MetaVoice:
                 memory_type="memories"
             )
 
+            # Observe agent communication for background semantic gravity analysis
+            if self.memory_bank and hasattr(self.memory_bank, 'agent_categorizer') and self.memory_bank.agent_categorizer:
+                try:
+                    # FIXED: Separate user input context from model response content
+                    context_data = {
+                        "trigger_context": prompt,  # Original user input (human language)  
+                        "response_content": response,  # Model's response content
+                        "usage_context": "agent_response",
+                        "response_type": "llm_extension_model",
+                        "content_type": "model_generated"  # Flag as model-generated content
+                    }
+                    await self.memory_bank.agent_categorizer.observe_agent_communication(response, context_data)
+                    self.log(f"Agent communication observed for semantic analysis: {response[:50]}... (responding to: {prompt[:30]}...)", "DEBUG", context="generate_with_model")
+                except Exception as e:
+                    self.log(f"Error observing agent communication: {e}", "WARNING", context="generate_with_model")
+
             return response
         except Exception as e:
             self.log(f"Model generation error: {e}", level="ERROR", context="generate_with_model")
             return "[Error: Model generation failed]"
         
     async def safe_get_particle_content(self, particle):
-        """Safely extract content from particle for reflection"""
+        """Safely extract content from particle for reflection with structure awareness"""
         try:
+            # First, try to get basic content
+            content = None
             if hasattr(particle, 'get_content'):
                 content = await particle.get_content()
             elif hasattr(particle, 'token'):
@@ -407,17 +432,86 @@ class MetaVoice:
                 content = particle.content
             elif hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
                 content = particle.metadata.get('content') or particle.metadata.get('token') or particle.metadata.get('text')
-            else:
-                content = str(particle)
             
-            # Ensure it's a string and not a complex object
-            if isinstance(content, (dict, list, tuple)):
-                return str(content)
-            return str(content) if content is not None else "empty content"
+            # For self-awareness, include SAFE particle structure summary
+            structure_summary = self._create_safe_particle_summary(particle)
+            
+            # Combine content with structure summary
+            if content:
+                if isinstance(content, (dict, list, tuple)):
+                    content_str = str(content)[:200]  # Limit content size
+                else:
+                    content_str = str(content)[:200] if content else "empty"
+                
+                return f"Content: {content_str} | Structure: {structure_summary}"
+            else:
+                return f"Structure: {structure_summary}"
             
         except Exception as e:
             self.log(f"Error extracting particle content: {e}")
             return f"content extraction error: {str(e)}"
+    
+    def _create_safe_particle_summary(self, particle):
+        """Create a safe, condensed summary of particle structure for self-awareness"""
+        try:
+            summary = {
+                "id": str(getattr(particle, 'id', 'unknown'))[:8],  # First 8 chars of ID
+                "type": str(getattr(particle, 'type', 'unknown')),
+                "energy": round(float(getattr(particle, 'energy', 0.0)), 3),
+                "activation": round(float(getattr(particle, 'activation', 0.0)), 3),
+                "alive": bool(getattr(particle, 'alive', False))
+            }
+            
+            # Add safe position data (first 3 dimensions only to prevent overflow)
+            if hasattr(particle, 'position') and particle.position is not None:
+                try:
+                    pos = particle.position
+                    if hasattr(pos, '__len__') and len(pos) >= 3:
+                        summary["pos_xyz"] = [
+                            round(float(pos[0]), 3),
+                            round(float(pos[1]), 3), 
+                            round(float(pos[2]), 3)
+                        ]
+                        # Add key semantic dimensions
+                        if len(pos) > 6:
+                            summary["frequency"] = round(float(pos[6]), 3)
+                        if len(pos) > 8:
+                            summary["valence"] = round(float(pos[8]), 3)
+                        if len(pos) > 10:
+                            summary["intent"] = round(float(pos[10]), 3)
+                except (IndexError, TypeError, ValueError):
+                    summary["pos_xyz"] = "parsing_error"
+            
+            # Add safe metadata summary
+            if hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
+                meta_keys = list(particle.metadata.keys())[:5]  # Only first 5 keys
+                summary["meta_keys"] = meta_keys
+                
+                # Include specific important metadata
+                if 'source' in particle.metadata:
+                    summary["source"] = str(particle.metadata['source'])[:20]
+                if 'timestamp' in particle.metadata:
+                    summary["timestamp"] = str(particle.metadata['timestamp'])[:20]
+            
+            # Add quantum state if available
+            if hasattr(particle, 'superposition'):
+                try:
+                    summary["quantum_state"] = {
+                        "certain": round(float(particle.superposition.get('certain', 0.5)), 3),
+                        "uncertain": round(float(particle.superposition.get('uncertain', 0.5)), 3)
+                    }
+                except (TypeError, ValueError):
+                    summary["quantum_state"] = "unknown"
+            
+            # Convert to string and limit size to prevent segfaults
+            summary_str = str(summary)
+            if len(summary_str) > 500:  # Limit to 500 chars
+                summary_str = summary_str[:497] + "..."
+            
+            return summary_str
+            
+        except Exception as e:
+            return f"structure_summary_error: {str(e)[:50]}"
     
     def sanitize_context_particles(self, context_particles):
         """Convert particle objects to serializable data"""
@@ -549,13 +643,29 @@ class MetaVoice:
         try:
 
             # Create lingual particle for input processing
-            particle = await self.spawn_input_particle(text, source="user_input")
-
-            self.chat_history.append({"Tony": text, "timestamp": dt.now().timestamp()})
+            particle = await self.spawn_input_particle(text, source="user_input", source_particle_id=source_particle_id or None)
+            self.chat_history.append({f"{self.user_name}": text, "timestamp": dt.now().timestamp()})
+            self.log(f"Processed user input into lingual particle ID: {str(particle.id) if particle else 'N/A'}", "DEBUG", context="process_input")
 
             return particle
         except Exception as e:
             self.log(f"Input processing error: {e}")
+            return None
+        
+    async def process_thought(self, text, source=None, source_particle_id = None):
+        """Process internal thought text and create lingual particles"""
+        try:
+            # Create lingual particle for internal processing
+            particle = await self.spawn_input_particle(text, source=source, source_particle_id=source_particle_id or None)
+            
+            if source == "internal_reflection":
+                self.thoughts.append({"reflection": text, "timestamp": dt.now().timestamp()})
+            else:
+                self.thoughts.append({"thought": text, "timestamp": dt.now().timestamp()})
+
+            return particle
+        except Exception as e:
+            self.log(f"Thought processing error: {e}")
             return None
         
     async def spawn_input_particle(self, text, source=None, source_particle_id = None):
@@ -563,22 +673,39 @@ class MetaVoice:
         try:
             if self.field:
                 if source_particle_id:
-                    source_particle = await self.field.get_particle_by_id(source_particle_id)
-                    particle = source_particle.create_linked_particle(
-                        particle_type="lingual",
-                        content = text,
-                        relationship_type="input_processing",
-                        context = source or "unknown"
-                    )
-                    await self.lexicon_store.add_from_particle(particle)
+                    source_particle = self.field.get_particle_by_id(source_particle_id)
+                    if source == "user_input":
+                        particle = await source_particle.create_linked_particle(
+                            particle_type="lingual",
+                            content = text,
+                            relationship_type="input_processing",
+                            context = source or "unknown"
+                        )
+                    else:
+                        particle = await source_particle.create_linked_particle(
+                            particle_type="lingual",
+                            content = text,
+                            relationship_type="internal_processing",
+                            context = source or "unknown"
+                        )
+                    
+                    text_hash = hash(text.lower().strip()) # hashing processed text to the recently processed list for caching
+                    if text_hash not in self._recently_processed:
+                        await self.lexicon_store.add_from_particle(particle)
+                        self._recently_processed.add(text_hash)
+
+                        if len(self._recently_processed) > 100:
+                            self._recently_processed = set(list(self._recently_processed)[-50:]) 
+
                     return particle
+                
                 else:
                     particle = await self.field.spawn_particle(
                         type="lingual",
                         metadata={
                             "content": text,
                             "source": source or "unknown",
-                            "processing_type": "input" if source == "user_input" else "unknown_input",
+                            "processing_type": "input" if source == "user_input" else "internal",
                             "timestamp": time()
                         },
                         energy=0.5,
@@ -586,11 +713,19 @@ class MetaVoice:
                         source_particle_id=source_particle_id if source_particle_id else None,
                         emit_event=False
                     )
-                    await self.lexicon_store.add_from_particle(particle)
+
+                    text_hash = hash(text.lower().strip())
+                    if text_hash not in self._recently_processed:
+                        await self.lexicon_store.add_from_particle(particle)
+                        self._recently_processed.add(text_hash)
+
+                        if len(self._recently_processed) > 100:
+                            self._recently_processed = set(list(self._recently_processed)[-50:]) 
+
                     return particle
             return None
         except Exception as e:
-            self.log(f"Error spawning input particle: {e}")
+            self.log(f"Error spawning input particle: {e}", "ERROR", context="spawn_input_particle")
             return None
 
     async def spawn_and_learn_token(self, tokens, source=None): 
@@ -628,10 +763,10 @@ class MetaVoice:
                             emit_event=False
                         )
                         
-                        # Learn token 
+                        # Learn token with proper origin context
                         if self.lexicon_store and lp and hasattr(lp, 'learn'):
                             try:
-                                await lp.learn(token=token)
+                                await lp.learn(token=token, origin=tokens, context=source)
                             except Exception as learn_error:
                                 self.log(f"Token learning error for '{token}': {learn_error}")
                                 self.log(f"Full traceback:\n{traceback.format_exc()}")
@@ -657,10 +792,10 @@ class MetaVoice:
                         emit_event=False
                     )
                     
-                    # Learn token 
+                    # Learn token with proper origin context
                     if self.lexicon_store and lp and hasattr(lp, 'learn'):
                         try:
-                            await lp.learn(token=tokens)
+                            await lp.learn(token=tokens, origin=f"input_processing:{source}" if source else "input_processing", context=source)
                         except Exception as learn_error:
                             self.log(f"Token learning error for '{tokens}': {learn_error}")
                             self.log(f"Full traceback:\n{traceback.format_exc()}")
@@ -728,14 +863,28 @@ class MetaVoice:
                         self.log(f"Reflecting on memory: {memory}")
 
                 elif chance >= 0.8:
-                    particles = self.field.get_all_particles()
-                    particle_positions = str([p.position for p in particles if hasattr(p, 'position')])
-                    if particle_positions:
-                        reflection_prompt = f"Thinking about my inner state and neural connections: {particle_positions}"
-                        self.log(f"Reflected on field contents, all particle positions")
+                    # Route particle structure reflection through core.py event system for safety
+                    anchor = api.get_api("_agent_anchor")
+                    if anchor:
+                        try:
+                            # Emit event for safe particle structure introspection
+                            await anchor.emit_event(
+                                "particle_structure_introspection",
+                                {
+                                    "trigger": "self_awareness_reflection",
+                                    "request_type": "safe_structure_summary",
+                                    "max_particles": 5  # Limit to prevent segfaults
+                                },
+                                source="voice_self_awareness"
+                            )
+                            reflection_prompt = "Thinking about my internal neural architecture and particle interactions."
+                            self.log("Reflected on internal structure via core event system")
+                        except Exception as e:
+                            self.log(f"Core event routing failed: {e}, falling back to safe reflection")
+                            reflection_prompt = "Reflecting on my current cognitive state."
                     else:
                         reflection_prompt = "Reflecting on my current state."
-                        self.log("No particle positions available for reflection OR unable to parse")
+                        self.log("No core event system available for structure reflection")
             
             else:
                 safe_content = await self.safe_get_particle_content(particle)
@@ -769,6 +918,29 @@ class MetaVoice:
                     source="internal_reflection"
                 )
 
+            self.log(f"Reflection response: {reflection_response}", "DEBUG", context="reflect")
+
+            # FIXED: Trigger translation analysis with proper content separation
+            try:
+                if self.memory_bank and hasattr(self.memory_bank, 'agent_categorizer') and self.memory_bank.agent_categorizer:
+                    # Separate trigger context from actual response content
+                    context_data = {
+                        "trigger_context": reflection_prompt,  # Human-readable trigger/prompt
+                        "response_content": str(reflection_response),  # Iris's actual compressed response
+                        "usage_context": "reflection_response", 
+                        "response_type": "internal_reflection",
+                        "reflection_target": particle.id if particle else "general",
+                        "trigger_source": "post_reflection_processing",
+                        "content_type": "iris_compressed_language"  # Flag this as Iris's language, not human
+                    }
+                    # Analyze the RESPONSE content (Iris's compressed tokens) with trigger as context
+                    await self.memory_bank.agent_categorizer.observe_agent_communication(str(reflection_response), context_data)
+                    self.log(f"Triggered translation analysis for compressed response: {str(reflection_response)[:50]}... (triggered by: {reflection_prompt[:30]}...)", "DEBUG", context="reflect")
+                else:
+                    self.log("Translation framework not available for reflection analysis", "DEBUG", context="reflect")
+            except Exception as e:
+                self.log(f"Error triggering translation analysis for reflection: {e}", "WARNING", context="reflect")
+
             # Create reflection particle
             response_particle = await self.field.spawn_particle(
                 type="lingual",
@@ -785,13 +957,35 @@ class MetaVoice:
             )
             if chance < 0.15:
                 if isinstance(reflection_response, str):
-                    await response_particle.learn(reflection_response)
+                    await response_particle.learn(reflection_response, origin="internal_reflection", context="reflection")
                 elif isinstance(reflection_response, list):
                     for token in reflection_response:
                         if isinstance(token, str):
-                            await response_particle.learn(token)
+                            await response_particle.learn(token, origin="internal_reflection", context="reflection")
                 else:
                     self.log(f"Unexpected reflection_response type: {type(reflection_response)}", "WARNING")
+                    
+                # NEW: Additional translation observation after particle learning
+                try:
+                    if self.memory_bank and hasattr(self.memory_bank, 'agent_categorizer') and self.memory_bank.agent_categorizer:
+                        learning_context = {
+                            "human_phrase": reflection_prompt,
+                            "usage_context": "particle_learning_reflection",
+                            "response_type": "post_learning_reflection", 
+                            "particle_id": response_particle.id if response_particle else None,
+                            "learning_probability": chance,
+                            "trigger_source": "post_learning_processing"
+                        }
+                        # Observe the learned content for additional compressed tokens
+                        if isinstance(reflection_response, str):
+                            await self.memory_bank.agent_categorizer.observe_agent_communication(reflection_response, learning_context)
+                        elif isinstance(reflection_response, list):
+                            for token in reflection_response:
+                                if isinstance(token, str):
+                                    await self.memory_bank.agent_categorizer.observe_agent_communication(token, learning_context)
+                        self.log(f"Triggered translation analysis after particle learning", "DEBUG", context="reflect")
+                except Exception as e:
+                    self.log(f"Error in post-learning translation analysis: {e}", "WARNING", context="reflect")
             
             try:
                 await self.memory_bank.update(

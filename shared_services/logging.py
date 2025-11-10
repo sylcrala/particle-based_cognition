@@ -28,18 +28,15 @@ config = api.get_api("config")
 
 class SystemLogger:
     def __init__(self):
-        self.session_id = str(dt.now().timestamp()).replace('.', '_')
-
         self.logs = []
-        self.mode = config.agent_mode
-        if self.mode == "llm-extension":
-            self.base_dir = Path("./logs/llm_extension")
-        elif self.mode == "cog-growth":
-            self.base_dir = Path("./logs/cog_growth")
+        self.logging_config = config.get_logging_config()
     
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.log_to_file = self.logging_config.get("log_to_file", True)
+        self.session_id = self.logging_config.get("session_id")
+        self.base_dir = Path(self.logging_config.get("base_dir"))
+        self.logs_dir = Path(self.logging_config.get("session_log_dir"))
 
-        self.logs_dir = self.base_dir / f"session_{self.session_id}"
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
 
         if len(self.logs) == 0:
@@ -47,33 +44,61 @@ class SystemLogger:
         
 
     def log(self, message, level = "INFO", context = None, source = None, user_id = None):
-        print(f"[{level}] {message}")  # Also print to console for immediate feedback
+        print(f"[{level}] {message}")  
         log_entry = {
+            "id": len(self.logs) + 1,
             "message": message,
             "level": level,
             "context": context,
             "source": source,
-            "user_id": user_id,
+            "user_id": user_id,     # unused for now, might be used in later update (or removed entirely)
             "timestamp": dt.now().timestamp()
         }
         self.logs.append(log_entry)
-        self.save_logs(log_entry)
+
+        if self.log_to_file:
+            self.save_session_logs(log_entry)
+            self.save_level_logs()
 
     def get_logs(self):
         return self.logs
     
-    def save_logs(self, entry=None):
-        log_file = self.logs_dir / f"system_log_{self.session_id}.json"
-        if not log_file.exists():
-            log_file.touch()
+    def save_level_logs(self):
+        """Saves logs categorized by their levels into separate files."""
+        try:
+            level_logs = {}
+            for entry in self.logs:
+                level = entry.get("level", "INFO")
+                if level not in level_logs:
+                    level_logs[level] = []
+                level_logs[level].append(entry)
 
-        if entry is not None:
-            with open(log_file, 'a') as f:
-                f.write(json.dumps(entry) + "\n")
-            return log_file
-        else:    
-            with open(log_file, 'w') as f:
-                json.dump(self.logs, f, indent=2)
-            return log_file
+            for level, entries in level_logs.items():
+                log_file = self.logs_dir / f"{level.lower()}_logs_{self.session_id}.json"
+                with open(log_file, 'w') as f:
+                    json.dump(entries, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to save level logs: {str(e)}")
+            return False
+    
+    def save_session_logs(self, entry=None):
+        """Saves the current session logs to a file. If an entry is provided, appends it to the log file."""
+        try:
+            log_file = self.logs_dir / f"system_log_{self.session_id}.json"
+            if not log_file.exists():
+                log_file.touch()
+
+            if entry is not None:
+                with open(log_file, 'a') as f:
+                    f.write(json.dumps(entry) + "\n")
+                return log_file
+            else:    
+                with open(log_file, 'w') as f:
+                    json.dump(self.logs, f, indent=2)
+                return log_file
+        except Exception as e:
+            print(f"[ERROR] Failed to save logs: {str(e)}")
+            return None
         
 api.register_api("logger", SystemLogger())

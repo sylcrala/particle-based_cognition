@@ -23,18 +23,21 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QTextE
 from PyQt6.QtCore import Qt
 from apis.api_registry import api
 import asyncio
+from pathlib import Path
 
 class ChatTab(QWidget):
     """Class dedicated to the chat interface and related utilities"""
     def __init__(self):
         super().__init__()
+
+        self.config = api.get_api("config")
     
         # set up layouts
         self.base_layout = QHBoxLayout()
         self.setLayout(self.base_layout)
         self.chat_layout = QVBoxLayout()
         self.chat_input_layout = QHBoxLayout()
-        self.base_layout.addLayout(self.chat_layout, stretch=4)
+        self.base_layout.addLayout(self.chat_layout, stretch=5)
         self.utility_layout = QVBoxLayout()
         self.base_layout.addLayout(self.utility_layout, stretch=1)
 
@@ -51,12 +54,33 @@ class ChatTab(QWidget):
         self.chat_input_layout.addWidget(self.send_button)
 
         # set up utility components
-        # TODO
-        self.utility_layout.addWidget(QLabel("TODO:"))
-        self.utility_layout.addWidget(QLabel("maybe ability to view chat history?"))
-        self.utility_layout.addWidget(QLabel("or configure chat settings?"))
-        self.utility_layout.addWidget(QLabel("Disclaimer: There's a slight issue with the communications pipeline after the latest updates with linguistic processing, so responses may be delayed or not appear at all. This will be fixed in the next update."))
+        self.utility_layout.addWidget(QLabel("<b>Utilities</b>"))
+        self.export_btn = QPushButton("Export Chat History")
+        self.export_btn.clicked.connect(self.export_chat_history)
+        self.utility_layout.addWidget(self.export_btn)
 
+        self.clear_btn = QPushButton("Clear Chat")
+        self.clear_btn.clicked.connect(self.clear_chat)
+        self.utility_layout.addWidget(self.clear_btn)
+        
+
+
+    def clear_chat(self):
+        """Clears the chat display"""
+        self.chat_display.clear()
+
+    def export_chat_history(self):
+        """Exports the current chat history to a text file"""
+        try:
+            chat_history = self.chat_display.toPlainText()
+            session = self.config.session_id
+            filename = f"chat_history_{session}.txt"
+            filepath = Path(self.config.export_path / filename)
+            with open(filepath, "w") as f:
+                f.write(chat_history)
+            self.chat_display.append(f"<b>Chat history exported to {filepath} </b>")
+        except Exception as e:
+            self.chat_display.append(f"<b>Error exporting chat history:</b> {str(e)}")
 
     def send_message(self):
         """Handles sending a message from the input box to the agent and displaying the response"""

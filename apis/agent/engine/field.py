@@ -64,6 +64,16 @@ class ParticleField:
         self.collapse_history = {}      # wavelength collapse history 
         self.certainty_threshold = 0.7
         self.creation_counter = 0       # Track particle creation order for energy cost calculation
+
+        # field stats
+        self.avg_energy = 0.0
+        self.avg_activation = 0.0
+        self.avg_valence = 0.0
+        self.avg_activation = 0.0
+        self.avg_frequency = 0.0
+        self.avg_mem_phase = 0.0
+        self.total_particle_count = 0
+        self.alive_particle_count = 0
         
         # Spatial indexing
         self.grid_size = 0.5  # Grid cell size for spatial partitioning
@@ -786,7 +796,17 @@ class ParticleField:
         
         # Get only alive particles for processing
         alive_particles = [p for p in self.particles if p.id in self.alive_particles]
-        
+
+        # update field stats
+        self.avg_energy = (sum(p.energy for p in alive_particles) / len(alive_particles)) if alive_particles else 0
+        self.avg_activation = (sum(p.activation for p in alive_particles) / len(alive_particles)) if alive_particles else 0
+        self.avg_frequency = (sum(p.position[6] for p in alive_particles) / len(alive_particles)) if alive_particles else 0
+        self.avg_valence = (sum(p.position[8] for p in alive_particles) / len(alive_particles)) if alive_particles else 0  
+        self.avg_mem_phase = (sum(p.position[7] for p in alive_particles) / len(alive_particles)) if alive_particles else 0
+        self.total_particle_count = len(self.particles)
+        self.alive_particle_count = len(alive_particles)
+
+
         if not alive_particles:
             return {"total_energy": 0, "alive_particles": 0}
         
@@ -1201,7 +1221,11 @@ class ParticleField:
                         if other and other.alive:
                             try:
                                 if self.adaptive_engine and hasattr(self.adaptive_engine, 'distance'):
-                                    dist = self.adaptive_engine.distance(particle, other)
+                                    # Use correct arguments for adaptive distance engine
+                                    dist = self.adaptive_engine.distance(
+                                        particle.id, particle.position, 
+                                        other.id, other.position
+                                    )
                                 else:
                                     # Fallback distance calculation
                                     dist = np.linalg.norm(np.array(particle.position) - np.array(other.position))

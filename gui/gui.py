@@ -88,10 +88,12 @@ class MainWindow(QMainWindow):
         # set up tabs for stacked layout - tab index listed next to each
         from gui.tabs.visualizer.visualizer import VisualizerTab
         from gui.tabs.chat.chat import ChatTab
+        from gui.tabs.logging.logs import LogsTab
         from gui.tabs.config.config import ConfigTab
+        from gui.tabs.analysis.analysis import AnalysisTab
         self.diagnostics_tab = QWidget() #0
         self.main_widget.addWidget(self.diagnostics_tab)
-        self.analytics_tab = QWidget() #1
+        self.analytics_tab = AnalysisTab() #1
         self.main_widget.addWidget(self.analytics_tab)
         self.memory_tab = QWidget() #2
         self.main_widget.addWidget(self.memory_tab)
@@ -99,7 +101,7 @@ class MainWindow(QMainWindow):
         self.main_widget.addWidget(self.visualizer_tab)
         self.chat_tab = ChatTab() #4
         self.main_widget.addWidget(self.chat_tab)
-        self.logs_tab = QWidget() #5
+        self.logs_tab = LogsTab() #5
         self.main_widget.addWidget(self.logs_tab)
         self.config_tab = ConfigTab() #6
         self.main_widget.addWidget(self.config_tab)

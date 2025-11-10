@@ -18,12 +18,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 Additional terms apply per TERMS.md. See also ETHICS.md.
 """
-
+from datetime import datetime as dt
 from apis.api_registry import api
+from pathlib import Path
 
 class Config():
     def __init__(self):
         self.system_language = "en"
+        self.session_id = str(dt.now().timestamp()).replace('.', '_')
 
         # os-specific settings
         #TODO: add support for OS detection and autofill
@@ -31,8 +33,13 @@ class Config():
         self.os_version = "fedora-42"   # dont worry this isn't used yet, it's just a placeholder for future use
         self.wayland_active = False     # this one is used for systems using wayland display server (like Fedora with GNOME, if you're using wayland and have some issues with the GUI or visualizer, try setting to True)
 
+        self.export_path = Path("./exports/")  # default path for exported data (like chat history) - make sure this directory exists or update to a valid path
+        self.export_path.mkdir(parents = True, exist_ok = True)
+
+        # user settings
         self.user_name = "User"         # default user name for interactions - update this so the agent can address you properly in time
         
+
         self.agent_mode = "cog-growth" 
         # options:   
         # cog-growth: no LLM for voice module - agent "grows" its own linguistic capabilities and knowledge base over time
@@ -41,6 +48,14 @@ class Config():
         # llm-extension mode will be developed alongside cog-growth mode, but the main priority of the project is to develop cog-growth mode and explore it's capabilities under this framework.        
         
         self.agent_name = "Misty" if self.agent_mode == "llm-extension" else "Iris"  # Misty for cog-growth, Iris for llm-extension. Change as desired.
+
+        self.LOGGING_CONFIG = {
+            "log_to_file": True,
+            "session_id": self.session_id,
+            "base_dir": f"./logs/{self.agent_mode}/",
+            "session_log_dir": f"./logs/{self.agent_mode}/session_{self.session_id}/",
+            "log_levels": ["DEBUG", "INFO", "WARNING", "ERROR"],
+        }
 
         self.AGENT_CONFIG = {
             "name": self.agent_name,
@@ -73,6 +88,9 @@ class Config():
             "random_weight": 0.6,
             "semantic_weight": 0.4
         }
+
+    def get_logging_config(self):
+        return self.LOGGING_CONFIG
 
     def get_llm_config(self):
         return self.LLM_CONFIG

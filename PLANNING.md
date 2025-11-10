@@ -5,6 +5,8 @@
  - ability to decline commands or requests
  - internal operations fully self-directed
  - ability to trigger external operations autonomously
+ - self-generated reflection prompts?
+ - - instead of encoded reflection prompts, go full chance based (for whether particle is injected and reflection type) but let voice.generate() handle the prompt - pseudo semi-autonomous internal thoughts
 
 ### (GUI) Visualizer tab
  - update VisualizerCanvas to operate on a dedicated thread, similar to the cognition engine itself - the hope is to alleviate the currently seen GUI stuttering and freezing that occurs under medium-to-heavy particle field load

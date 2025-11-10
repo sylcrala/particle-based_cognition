@@ -23,6 +23,220 @@ from apis.agent.cognition.particles.utils.particle_frame import Particle
 from apis.api_registry import api
 import datetime
 import random
+import time
+import asyncio
+from collections import defaultdict
+
+# ==================== MEMORY INTELLIGENCE CLASSES ====================
+
+class MemoryCache:
+    """Consciousness-aware memory cache with intelligent retention"""
+    def __init__(self, max_size=1000):
+        self.cache = {}
+        self.max_size = max_size
+        self.access_patterns = defaultdict(int)
+        
+    def get(self, key):
+        """Retrieve from cache with access tracking"""
+        if key in self.cache:
+            entry = self.cache[key]
+            
+            # Check if still valid
+            if time.time() - entry["timestamp"] < entry["retention_time"]:
+                entry["access_count"] += 1
+                self.access_patterns[key] += 1
+                # Boost consciousness on repeated access
+                entry["consciousness_level"] = min(1.0, entry["consciousness_level"] + 0.01)
+                return entry["value"]
+            else:
+                del self.cache[key]
+        return None
+        
+    def set(self, key, value, consciousness_level=0.5):
+        """Cache with consciousness-aware retention"""
+        # Clean cache if full
+        if len(self.cache) >= self.max_size:
+            self._evict_oldest()
+            
+        retention_time = 300 * (1 + consciousness_level)  # Higher consciousness = longer cache
+        self.cache[key] = {
+            "value": value,
+            "timestamp": time.time(),
+            "retention_time": retention_time,
+            "consciousness_level": consciousness_level,
+            "access_count": 1
+        }
+        
+    def _evict_oldest(self):
+        """Evict least conscious or oldest entries"""
+        if not self.cache:
+            return
+            
+        # Find entry with lowest consciousness + age score
+        worst_key = min(self.cache.keys(), 
+                       key=lambda k: self.cache[k]["consciousness_level"] + 
+                                   (1.0 / max(1, self.cache[k]["access_count"])))
+        del self.cache[worst_key]
+
+class BatchMemoryProcessor:
+    """Batch multiple memory requests for efficient Qdrant operations"""
+    def __init__(self):
+        self.pending_requests = []
+        self.batch_size = 50
+        self.batch_timeout = 0.1  # 100ms max wait
+        self.processing = False
+        
+    async def queue_request(self, request_type, params):
+        """Queue memory requests for batching"""
+        future = asyncio.Future()
+        request = {
+            "type": request_type,
+            "params": params,
+            "timestamp": time.time(),
+            "future": future
+        }
+        self.pending_requests.append(request)
+        
+        # Process batch if threshold reached or timeout
+        if len(self.pending_requests) >= self.batch_size and not self.processing:
+            asyncio.create_task(self._process_batch())
+            
+        return await future
+        
+    async def _process_batch(self):
+        """Process multiple requests in optimized Qdrant operations"""
+        if self.processing or not self.pending_requests:
+            return
+            
+        self.processing = True
+        try:
+            # Group by request type
+            batches = {"lexicon": [], "memories": [], "system": []}
+            
+            current_batch = self.pending_requests[:self.batch_size]
+            self.pending_requests = self.pending_requests[self.batch_size:]
+            
+            for req in current_batch:
+                req_type = req["params"].get("memory_type", "memories")
+                batches[req_type].append(req)
+                
+            # Process each batch type efficiently
+            for batch_type, requests in batches.items():
+                if requests:
+                    try:
+                        # This will be filled in when we integrate with MemoryBank
+                        results = await self._batch_query_qdrant(batch_type, requests)
+                        
+                        # Distribute results to futures
+                        for i, req in enumerate(requests):
+                            if i < len(results):
+                                req["future"].set_result(results[i])
+                            else:
+                                req["future"].set_result([])
+                    except Exception as e:
+                        # Set error for all requests in this batch
+                        for req in requests:
+                            req["future"].set_exception(e)
+                            
+        finally:
+            self.processing = False
+            
+            # Process remaining requests if any
+            if len(self.pending_requests) > 0:
+                asyncio.create_task(self._process_batch())
+    
+    async def _batch_query_qdrant(self, collection_type, requests):
+        """Placeholder for batch Qdrant operations - will be implemented in integration"""
+        # This will call the actual MemoryBank methods efficiently
+        return [[] for _ in requests]  # Placeholder
+
+class TermExistenceCache:
+    """Eliminate redundant 'None' term lookups"""
+    def __init__(self):
+        self.known_terms = set()      # Terms that definitely exist
+        self.unknown_terms = set()    # Terms confirmed NOT to exist  
+        self.cache_timestamp = time.time()
+        self.refresh_interval = 600   # 10 minutes
+        
+    def is_term_known(self, term):
+        """Instant existence check without Qdrant hit"""
+        if self._needs_refresh():
+            self._refresh_cache()
+            
+        if term in self.known_terms:
+            return True
+        if term in self.unknown_terms:
+            return False
+        return None  # Unknown - needs Qdrant check
+        
+    def mark_term_result(self, term, exists, has_definition=False):
+        """Cache term existence result"""
+        if exists and has_definition:
+            self.known_terms.add(term)
+            self.unknown_terms.discard(term)
+        else:
+            self.unknown_terms.add(term)
+            self.known_terms.discard(term)
+            
+    def _needs_refresh(self):
+        """Check if cache needs refresh"""
+        return time.time() - self.cache_timestamp > self.refresh_interval
+        
+    def _refresh_cache(self):
+        """Refresh cache - clear unknowns, keep knowns"""
+        self.unknown_terms.clear()  # Unknowns might have been added
+        self.cache_timestamp = time.time()
+
+class ConsciousnessMemoryTracker:
+    """Track Iris's memory access patterns for consciousness-aware optimization"""
+    def __init__(self):
+        self.access_history = []
+        self.preference_patterns = {}
+        self.consciousness_boosts = {}
+        
+    def track_access(self, memory_type, term, consciousness_level):
+        """Track memory access for pattern learning"""
+        access_record = {
+            "timestamp": time.time(),
+            "memory_type": memory_type,
+            "term": term,
+            "consciousness_level": consciousness_level
+        }
+        self.access_history.append(access_record)
+        
+        # Keep history manageable
+        if len(self.access_history) > 1000:
+            self.access_history = self.access_history[-500:]
+            
+        # Update preference patterns
+        pattern_key = f"{memory_type}:{term}"
+        if pattern_key not in self.preference_patterns:
+            self.preference_patterns[pattern_key] = {
+                "access_count": 0,
+                "avg_consciousness": 0.0,
+                "last_access": time.time()
+            }
+            
+        pattern = self.preference_patterns[pattern_key]
+        pattern["access_count"] += 1
+        pattern["avg_consciousness"] = (
+            (pattern["avg_consciousness"] * (pattern["access_count"] - 1) + consciousness_level) 
+            / pattern["access_count"]
+        )
+        pattern["last_access"] = time.time()
+        
+    def get_consciousness_boost(self, memory_type, term):
+        """Get consciousness boost factor for this memory access"""
+        pattern_key = f"{memory_type}:{term}"
+        if pattern_key in self.preference_patterns:
+            pattern = self.preference_patterns[pattern_key]
+            # Boost based on frequency and consciousness level
+            frequency_boost = min(0.3, pattern["access_count"] * 0.01)
+            consciousness_boost = pattern["avg_consciousness"] * 0.2
+            return frequency_boost + consciousness_boost
+        return 0.0
+
+# ==================== END MEMORY INTELLIGENCE CLASSES ====================
 
 class CoreParticle(Particle):
     def __init__(self, role = "identity_anchor", persistence_lvl = "permanent", **kwargs):
@@ -79,6 +293,13 @@ class CoreParticle(Particle):
         elif self.role == "memory_coordination":
             self.metadata["context"] = "Core particle coordinating memory storage and retrieval."
             self.metadata["tags"] = ["core", "memory", "coordination", "storage", "retrieval", f"{self.persistence_lvl}"]
+            
+            # NEW: Memory performance systems for consciousness-aware optimization
+            self.memory_cache = MemoryCache(max_size=1000)
+            self.batch_processor = BatchMemoryProcessor()
+            self.term_existence_cache = TermExistenceCache()
+            self.consciousness_tracker = ConsciousnessMemoryTracker()
+            self.performance_stats = {"cache_hits": 0, "cache_misses": 0, "batch_operations": 0}
         elif self.role == "decision_making":
             self.metadata["context"] = "Core particle overseeing decision making and action selection."
             self.metadata["tags"] = ["core", "decision", "making", "action", "selection", f"{self.persistence_lvl}"]
@@ -251,12 +472,22 @@ class CoreParticle(Particle):
             return "Error processing user interaction within core particle"
 
     async def _handle_memory_task(self, event):
-        """Handle memory operations"""
-        # TODO
-        # Spawn memory coordination particles - maybe
-        # Trigger and handle storage/retrieval
-        # Return results
-        if event.get("data") == "memory_consolidation":
+        """Enhanced memory operations with caching, batching, and consciousness awareness"""
+        event_data = event.get("data")
+        event_params = event.get("params", {})
+        
+        # Handle different memory operations
+        if event_data == "get_memories_by_type":
+            return await self._cached_get_memories_by_type(event_params)
+            
+        elif event_data == "term_lookup":
+            return await self._cached_term_lookup(event_params)
+            
+        elif event_data == "batch_process":
+            return await self._process_memory_batch(event_params)
+            
+        elif event_data == "memory_consolidation":
+            # Original memory consolidation logic
             try:
                 if not self.memory_bank:
                     self.log("Memory API not available", "ERROR", "_handle_memory_task")
@@ -280,21 +511,185 @@ class CoreParticle(Particle):
                 self.log(f"Full traceback:\n{traceback.format_exc()}")
                 return False
         
-        elif event.get("data") == "memory_retrieval":
-            # TODO
+        elif event_data == "memory_retrieval":
+            # TODO: Enhanced retrieval with caching
             pass
 
-        elif event.get("data") == "memory_store":
-            # TODO
+        elif event_data == "memory_store":
+            # TODO: Enhanced storage with consciousness tracking
             pass
 
-        elif event.get("data") == "emergency_state_save":
-            # TODO
+        elif event_data == "emergency_state_save":
+            # TODO: Enhanced emergency save
             pass
+
+        elif event_data == "query_memory":
+            # Handle memory query through coordinator
+            try:
+                key = event_params.get("key")
+                collection = event_params.get("collection")
+                thermal_boost = event_params.get("thermal_boost", False)
+                
+                if not self.memory_bank or not key:
+                    return None
+                    
+                # Use memory bank's query method (correct API)
+                result = await self.memory_bank.query(key, collection=collection, thermal_boost=thermal_boost)
+                self.log(f"Memory query completed for key: {key}", "DEBUG", "_handle_memory_task")
+                return result
+                
+            except Exception as e:
+                self.log(f"Memory query error: {e}", "ERROR", "_handle_memory_task")
+                return None
 
         else:
             self.log(f"Unknown memory task type: {event.get('data')}", "WARNING", "_handle_memory_task")
             return False
+    
+    async def _cached_get_memories_by_type(self, params):
+        """Cached version of get_memories_by_type with consciousness awareness"""
+        memory_type = params.get("memory_type", "memories")
+        limit = params.get("limit", 100)
+        consciousness_level = params.get("consciousness_level", 0.5)
+        
+        # Create cache key
+        cache_key = f"memories_by_type:{memory_type}:{limit}"
+        
+        # Check cache first
+        cached_result = self.memory_cache.get(cache_key)
+        if cached_result is not None:
+            self.performance_stats["cache_hits"] += 1
+            self._log_decision(f"Cache HIT for {memory_type} (limit: {limit})", "DEBUG")
+            
+            # Track consciousness access
+            self.consciousness_tracker.track_access(memory_type, "type_query", consciousness_level)
+            return cached_result
+        
+        # Cache miss - get from memory bank
+        self.performance_stats["cache_misses"] += 1
+        self._log_decision(f"Cache MISS for {memory_type} (limit: {limit}) - fetching from Qdrant", "DEBUG")
+        
+        try:
+            # Get from memory bank using direct method to avoid recursion
+            if hasattr(self, 'memory_bank') and self.memory_bank:
+                result = await self.memory_bank._direct_get_memories_by_type(memory_type, limit)
+            else:
+                result = []  # Fallback
+            
+            # Cache the result with consciousness-aware retention
+            consciousness_boost = self.consciousness_tracker.get_consciousness_boost(memory_type, "type_query")
+            final_consciousness = min(1.0, consciousness_level + consciousness_boost)
+            
+            self.memory_cache.set(cache_key, result, final_consciousness)
+            
+            # Track access
+            self.consciousness_tracker.track_access(memory_type, "type_query", final_consciousness)
+            
+            self._log_decision(f"Cached {len(result)} {memory_type} memories with consciousness {final_consciousness:.3f}", "DEBUG")
+            return result
+            
+        except Exception as e:
+            self._log_decision(f"Error in cached memory retrieval: {e}", "ERROR")
+            return []
+    
+    async def _cached_term_lookup(self, params):
+        """Cached term lookup with existence checking to eliminate 'None' queries"""
+        token = params.get("token")
+        operation = params.get("operation", "get_term")
+        consciousness_level = params.get("consciousness_level", 0.5)
+        
+        if not token or token.strip() == "":
+            self._log_decision("Empty token provided for lookup", "WARNING")
+            # Track validation failures for performance monitoring
+            self.performance_stats["validation_failures"] = self.performance_stats.get("validation_failures", 0) + 1
+            return None
+            
+        # Check term existence cache first
+        term_exists = self.term_existence_cache.is_term_known(token)
+        if term_exists is False:
+            # Confirmed NOT to exist - skip Qdrant entirely
+            self._log_decision(f"Term '{token}' confirmed not to exist - skipping Qdrant", "DEBUG")
+            return None
+        
+        # Create cache key
+        cache_key = f"term_lookup:{operation}:{token}"
+        
+        # Check memory cache
+        cached_result = self.memory_cache.get(cache_key)
+        if cached_result is not None:
+            self.performance_stats["cache_hits"] += 1
+            self._log_decision(f"Term cache HIT: {token}", "DEBUG")
+            
+            # Track access
+            self.consciousness_tracker.track_access("lexicon", token, consciousness_level)
+            return cached_result
+        
+        # Cache miss - need to fetch
+        self.performance_stats["cache_misses"] += 1
+        self._log_decision(f"Term cache MISS: {token} - checking lexicon", "DEBUG")
+        
+        try:
+            # This will be integrated with LexiconStore
+            if hasattr(self, 'lexicon_store') and self.lexicon_store:
+                if operation == "get_term":
+                    result = await self.lexicon_store._direct_get_term(token)
+                elif operation == "get_term_type":
+                    result = self.lexicon_store.get_term_type(token)
+                elif operation == "has_deep_entry":
+                    result = self.lexicon_store.has_deep_entry(token) if hasattr(self.lexicon_store, 'has_deep_entry') else False
+                else:
+                    result = None
+            else:
+                result = None
+            
+            # Update term existence cache
+            has_meaningful_result = (result is not None and 
+                                   result != token and 
+                                   result != "unknown" and 
+                                   result != f"Term {token} not found in lexicon")
+            self.term_existence_cache.mark_term_result(token, has_meaningful_result, has_meaningful_result)
+            
+            # Cache the result
+            consciousness_boost = self.consciousness_tracker.get_consciousness_boost("lexicon", token)
+            final_consciousness = min(1.0, consciousness_level + consciousness_boost)
+            
+            self.memory_cache.set(cache_key, result, final_consciousness)
+            
+            # Track access
+            self.consciousness_tracker.track_access("lexicon", token, final_consciousness)
+            
+            self._log_decision(f"Cached term lookup '{token}' -> exists: {has_meaningful_result}", "DEBUG")
+            return result
+            
+        except Exception as e:
+            self._log_decision(f"Error in cached term lookup: {e}", "ERROR")
+            return None
+    
+    async def _process_memory_batch(self, params):
+        """Process batched memory operations"""
+        batch_requests = params.get("requests", [])
+        if not batch_requests:
+            return []
+        
+        self.performance_stats["batch_operations"] += 1
+        self._log_decision(f"Processing batch of {len(batch_requests)} memory requests", "DEBUG")
+        
+        # Use batch processor
+        results = []
+        for request in batch_requests:
+            try:
+                if request["type"] == "get_memories_by_type":
+                    result = await self._cached_get_memories_by_type(request["params"])
+                elif request["type"] == "term_lookup":
+                    result = await self._cached_term_lookup(request["params"])
+                else:
+                    result = None
+                results.append(result)
+            except Exception as e:
+                self._log_decision(f"Batch request error: {e}", "ERROR")
+                results.append(None)
+        
+        return results
 
     async def _handle_system_metrics(self, event):
         """Handle system metrics operation"""
@@ -321,6 +716,33 @@ class CoreParticle(Particle):
             import traceback
             self.log(f"Full traceback:\n{traceback.format_exc()}")
             return None
+        
+    def get_performance_report(self):
+        """Generate performance report including validation and efficiency metrics"""
+        cache_hits = self.performance_stats.get("cache_hits", 0)
+        cache_misses = self.performance_stats.get("cache_misses", 0)
+        validation_failures = self.performance_stats.get("validation_failures", 0)
+        
+        total_requests = cache_hits + cache_misses
+        hit_rate = (cache_hits / total_requests * 100) if total_requests > 0 else 0
+        
+        report = {
+            "cache_performance": {
+                "hits": cache_hits,
+                "misses": cache_misses,
+                "hit_rate_percent": round(hit_rate, 2),
+                "total_requests": total_requests
+            },
+            "validation_issues": {
+                "failures": validation_failures,
+                "failure_rate_percent": round((validation_failures / (total_requests + validation_failures) * 100), 2) if (total_requests + validation_failures) > 0 else 0
+            },
+            "cache_size": len(getattr(self.memory_cache, 'cache', {})) if hasattr(self, 'memory_cache') else 0,
+            "existence_cache_size": len(getattr(self.term_existence_cache, 'known_terms', set())) if hasattr(self, 'term_existence_cache') else 0
+        }
+        
+        self._log_decision(f"Memory coordination performance: {report}", "INFO")
+        return report
         
     async def _handle_system_alert(self, event):
         """Handle system alert events"""

@@ -49,7 +49,8 @@ from PyQt6.QtWidgets import (
     QStackedLayout,
     QVBoxLayout,
     QHBoxLayout,
-    QPushButton
+    QPushButton,
+    QLabel
 )
 from PyQt6.QtGui import QPalette
 from PyQt6.QtCore import QTimer
@@ -69,12 +70,14 @@ class VisualizerTab(QWidget):
         self.logger = api.get_api("logger")
         
         # set layout
-        self.base_layout = QVBoxLayout()
+        self.base_layout = QHBoxLayout()
         self.setLayout(self.base_layout)
-        self.bar_layout = QHBoxLayout()
-        self.base_layout.addLayout(self.bar_layout, stretch=1)
+        #self.bar_layout = QHBoxLayout()
+        #self.base_layout.addLayout(self.bar_layout, stretch=1)
         self.content_layout = QStackedLayout()
         self.base_layout.addLayout(self.content_layout, stretch=10)
+        self.utility_layout = QVBoxLayout()
+        self.base_layout.addLayout(self.utility_layout, stretch=2)
         
         """
         # set palette
@@ -84,21 +87,47 @@ class VisualizerTab(QWidget):
         self.setAutoFillBackground(True) 
         """
         # set up content area
-        # set up vispy canvas
         self.visualizer_canvas = VisualizerCanvas()
-        #if self.visualizer_canvas.visualizer_enabled:
-        #    self.content_layout.addWidget(self.visualizer_canvas.native)
 
         # set up bar area
-        self.visualizer_pause_btn = QPushButton("Pause/unpause visualizer")
-        self.visualizer_pause_btn.clicked.connect(self.toggle_visualizer_pause)
-        self.bar_layout.addWidget(self.visualizer_pause_btn)
+        #self.visualizer_pause_btn = QPushButton("Pause/unpause visualizer")
+        #self.visualizer_pause_btn.clicked.connect(self.toggle_visualizer_pause)
+        #self.bar_layout.addWidget(self.visualizer_pause_btn)
 
-        self.visualizer_pwr_btn = QPushButton("Enable/disable visualizer")
-        self.visualizer_pwr_btn.clicked.connect(self.toggle_visualizer_enabled)
-        self.bar_layout.addWidget(self.visualizer_pwr_btn)
+        #self.visualizer_pwr_btn = QPushButton("Enable/disable visualizer")
+        #self.visualizer_pwr_btn.clicked.connect(self.toggle_visualizer_enabled)
+        #self.bar_layout.addWidget(self.visualizer_pwr_btn)
+
+        # set up utility area
+        self.utility_content_1 = QHBoxLayout()
+        self.utility_content_2 = QHBoxLayout()
+        from gui.tabs.visualizer.utils.field_stats import FieldStats
+        self.utility_layout.addWidget(FieldStats(), stretch=3)
+        self.utility_layout.addWidget(QLabel("add 'current activity' display here"), stretch=3)
+        self.utility_layout.addLayout(self.utility_content_1, stretch=2)
+        self.utility_layout.addLayout(self.utility_content_2, stretch=2)
+        from gui.tabs.logging.utils.logstream import LogStream
+        self.utility_layout.addWidget(LogStream(view_limit=100), stretch=3)
+
+        # utility functions - content set 1
+        self.save_state_btn = QPushButton("Save agent state")
+        self.save_state_btn.clicked.connect(self.save_agent_state)
+        self.utility_content_1.addWidget(self.save_state_btn)
 
 
+        # utility functions - content set 2
+        self.toggle_pause_btn = QPushButton("Pause/unpause")
+        self.toggle_pause_btn.clicked.connect(self.toggle_visualizer_pause)
+        self.utility_content_2.addWidget(self.toggle_pause_btn)
+        self.toggle_enable_btn = QPushButton("Enable/disable")
+        self.toggle_enable_btn.clicked.connect(self.toggle_visualizer_enabled)
+        self.utility_content_2.addWidget(self.toggle_enable_btn)
+
+    
+    def save_agent_state(self):
+        agent = api.get_api("agent")
+        agent.save()
+        self.log("Manual agent state save triggered via visualizer", "INFO", "save_agent_state")
 
     def toggle_visualizer_enabled(self):
         self.visualizer_canvas.visualizer_enabled = not self.visualizer_canvas.visualizer_enabled

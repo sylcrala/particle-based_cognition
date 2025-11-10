@@ -458,9 +458,26 @@ class Particle:
             return base * valence * age_decay * rhythym_bonus * 0.95
 
     def distance_to(self, other):
-        return math.sqrt(sum(
-            (self.position[i] - other.position[i]) ** 2 for i in range(12)
-        ))
+        """Calculate distance to another particle using the adaptive distance engine for consistency"""
+        try:
+            # Use the adaptive distance engine for consistent distance calculations
+            adaptive_engine = api.get_api("_agent_adaptive_engine")
+            if adaptive_engine and hasattr(adaptive_engine, 'distance'):
+                # Use adaptive engine with proper parameters: (id_a, pos_a, id_b, pos_b)
+                return adaptive_engine.distance(
+                    self.id, self.position,
+                    other.id, other.position
+                )
+            else:
+                # Fallback to Euclidean distance if adaptive engine unavailable
+                return math.sqrt(sum(
+                    (self.position[i] - other.position[i]) ** 2 for i in range(12)
+                ))
+        except Exception as e:
+            # Fallback to simple Euclidean on any error
+            return math.sqrt(sum(
+                (self.position[i] - other.position[i]) ** 2 for i in range(12)
+            ))
 
     async def color(self):
         """Determine RGB color based on type, activation, valence, and frequency - DEPRECATED"""

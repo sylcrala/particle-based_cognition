@@ -30,7 +30,8 @@ from apis.api_registry import api
 class MemoryParticle(Particle):
     def __init__(self, **kwargs):
         super().__init__(type="memory", **kwargs)
-        self.token = self.metadata.get("content", "")
+        self.key = self.metadata.get("key")
+        self.token = self.metadata.get("content")
         self.embedding = None
         self.last_accessed = datetime.now().timestamp()
         self.retrieval_count = self.metadata.setdefault("retrieval_count", 0)

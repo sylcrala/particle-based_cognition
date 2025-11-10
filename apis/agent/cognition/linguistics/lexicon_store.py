@@ -36,29 +36,205 @@ class LexiconStore:
 
         self.memory = memory
         self.adaptive_engine = adaptive_engine
+        self.memory_coordinator = None  # Reference to memory coordination particle
+        
+        # Agent categorization access (will be linked from memory bank)
+        self.agent_categorizer = None
+        
+        # Batch storage system for efficiency
+        self.pending_batch = []
+        self.batch_size = 10  # Store in batches of 10
+        self.batch_timeout = 30  # Store after 30 seconds regardless
+        self.last_batch_time = datetime.now()
+        
+        # Deduplication cache to prevent repeat learning
+        self.recent_tokens = set()  # Cache for recently processed tokens
+        self.cache_max_size = 1000
+        self.cache_cleanup_interval = 100  # Clean cache every N operations
+        
 
     def custom_tokenizer(self, text):
-        """Custom tokenizer to split text into words and punctuation"""
+        """Custom tokenizer to split text into words and punctuation - enhanced with validation"""
+        if not text or not isinstance(text, str):
+            return []
+            
         tokens = []
         word = ''
+        
         for char in text:
+            # REMOVED: Single character tokenization from lexicon lookup
+            # This was causing excessive single-character learning noise
+            # if char in self.lexicon:
+            #     tokens.append(char)
+            
             if char in string.whitespace:
-                if word:
-                    tokens.append(word)
+                if word.strip():  # Only add non-empty words
+                    tokens.append(word.strip())
                     word = ''
             elif char in string.punctuation:
-                if word:
-                    tokens.append(word)
+                if word.strip():  # Only add non-empty words
+                    tokens.append(word.strip())
                     word = ''
                 tokens.append(char)
             else:
                 word += char
-        if word:
-            tokens.append(word)
-        return tokens
+                
+        if word.strip():  # Only add non-empty final word
+            tokens.append(word.strip())
+            
+        # Filter out single characters and empty strings to reduce cognitive noise
+        # Allow only meaningful words (length >= 2) or common single-char elements (punctuation)
+        filtered_tokens = []
+        for token in tokens:
+            if token and token.strip():
+                if len(token) >= 2 or token in string.punctuation:
+                    filtered_tokens.append(token)
+        
+        return filtered_tokens
+    
+    def _setup_memory_coordination(self):
+        """Set up connection to memory coordination particle for performance optimization"""
+        try:
+            if self.memory and hasattr(self.memory, 'field') and self.memory.field:
+                # Find memory coordination particle
+                particles = self.memory.field.get_all_particles()
+                for particle in particles:
+                    if (hasattr(particle, 'role') and 
+                        particle.role == "memory_coordination" and
+                        hasattr(particle, 'memory_cache')):
+                        self.memory_coordinator = particle
+                        self.logger.log("LexiconStore connected to memory coordination particle", "INFO", "_setup_memory_coordination")
+                        # Link lexicon store to coordinator
+                        particle.lexicon_store = self
+                        return
+                        
+                self.logger.log("Memory coordination particle not found for LexiconStore", "WARNING", "_setup_memory_coordination")
+            else:
+                self.logger.log("No memory or field available for LexiconStore coordination", "WARNING", "_setup_memory_coordination")
+                
+        except Exception as e:
+            self.logger.log(f"LexiconStore memory coordination setup failed: {e}", "WARNING", "_setup_memory_coordination")
+            self.memory_coordinator = None
+
+    def _check_token_deduplication(self, token: str) -> bool:
+        """Check if token was recently processed to prevent duplicate learning"""
+        try:
+            # Clean cache if too large
+            if len(self.recent_tokens) > self.cache_max_size:
+                # Keep only recent 500 tokens
+                token_list = list(self.recent_tokens)
+                self.recent_tokens = set(token_list[-500:])
+                self.logger.log(f"Cleaned token deduplication cache, kept {len(self.recent_tokens)} tokens", "DEBUG", "_check_token_deduplication")
+            
+            # Check for recent processing
+            if token.lower() in self.recent_tokens:
+                self.logger.log(f"Token '{token}' already recently processed, skipping to prevent duplication", "DEBUG", "_check_token_deduplication")
+                return False  # Skip - already processed
+            
+            # Add to cache
+            self.recent_tokens.add(token.lower())
+            return True  # Proceed with processing
+            
+        except Exception as e:
+            self.logger.log(f"Error in token deduplication check: {e}", "WARNING", "_check_token_deduplication")
+            return True  # Allow processing on error
+
+    async def _flush_pending_batch(self):
+        """Flush pending batch to memory storage"""
+        try:
+            if not self.pending_batch:
+                return
+                
+            batch_size = len(self.pending_batch)
+            self.logger.log(f"Flushing batch of {batch_size} lexicon entries to memory", "DEBUG", "_flush_pending_batch")
+            
+            # Route through coordinator if available for batch optimization
+            coordinator_result = await self._route_through_coordinator("batch_store_lexicon", {
+                "entries": self.pending_batch,
+                "batch_size": batch_size
+            })
+            
+            if coordinator_result is not None:
+                self.logger.log(f"Batch storage coordinated successfully: {batch_size} entries", "INFO", "_flush_pending_batch")
+            else:
+                # Fallback to individual storage
+                for entry in self.pending_batch:
+                    await self.memory.update(
+                        key=entry["key"],
+                        value=entry["value"],
+                        source=entry.get("source", "lexicon_batch"),
+                        tags=entry.get("tags", ["lexicon", "batch"]),
+                        memory_type="lexicon",
+                        source_particle_id=entry.get("source_particle_id"),
+                        **entry.get("kwargs", {})
+                    )
+                
+                self.logger.log(f"Batch fallback storage completed: {batch_size} entries", "INFO", "_flush_pending_batch")
+            
+            # Clear batch
+            self.pending_batch.clear()
+            self.last_batch_time = datetime.now()
+            
+        except Exception as e:
+            self.logger.log(f"Error flushing lexicon batch: {e}", "ERROR", "_flush_pending_batch")
+            # Clear batch anyway to prevent endless retries
+            self.pending_batch.clear()
+
+    async def _add_to_batch(self, key: str, value: dict, source: str = None, tags: list = None, 
+                           source_particle_id = None, **kwargs):
+        """Add entry to pending batch for efficient storage"""
+        try:
+            batch_entry = {
+                "key": key,
+                "value": value,
+                "source": source,
+                "tags": tags,
+                "source_particle_id": source_particle_id,
+                "kwargs": kwargs
+            }
+            
+            self.pending_batch.append(batch_entry)
+            
+            # Check if batch should be flushed
+            should_flush = (
+                len(self.pending_batch) >= self.batch_size or
+                (datetime.now() - self.last_batch_time).total_seconds() > self.batch_timeout
+            )
+            
+            if should_flush:
+                await self._flush_pending_batch()
+                
+        except Exception as e:
+            self.logger.log(f"Error adding to batch: {e}", "ERROR", "_add_to_batch")
+
+    async def force_flush_batch(self):
+        """Force flush any pending batch entries - call during shutdown"""
+        try:
+            if self.pending_batch:
+                self.logger.log(f"Force flushing {len(self.pending_batch)} pending lexicon entries", "INFO", "force_flush_batch")
+                await self._flush_pending_batch()
+        except Exception as e:
+            self.logger.log(f"Error in force flush: {e}", "ERROR", "force_flush_batch")
+
+    async def _route_through_coordinator(self, operation_type, params):
+        """Route operation through memory coordinator if available"""
+        if self.memory_coordinator:
+            try:
+                event = {
+                    "type": "memory_task",
+                    "data": operation_type,
+                    "params": params,
+                    "source": "LexiconStore"
+                }
+                result = await self.memory_coordinator._handle_memory_task(event)
+                return result
+            except Exception as e:
+                self.logger.log(f"LexiconStore coordinator routing failed: {e} - falling back to direct", "WARNING", "_route_through_coordinator")
+                return None
+        return None
     
     async def add_from_particle(self, particle):
-        """Add terms from particle content"""
+        """Add terms from particle content with enhanced deduplication"""
         try:
             content = str(particle.metadata)
             if not content:
@@ -68,13 +244,19 @@ class LexiconStore:
             tokens = self.custom_tokenizer(content)
             total_count = len(tokens)
             added_count = 0
+            skipped_duplicate_count = 0
 
             for token in tokens:
-                if added_count == total_count or added_count >= 20: # limit to 20 terms per particle to prevent overloading
-                    break
-
+                # Apply deduplication check
+                if not self._check_token_deduplication(token):
+                    skipped_duplicate_count += 1
+                    continue
+                    
                 if random.random() < 0.5:  # 50% chance to skip - helps prevent only initial terms being added
                     continue
+
+                if added_count == total_count or added_count >= 20: # limit to 20 terms per particle to prevent overloading
+                    break
                 
                 await self.add_term(
                     token=token,
@@ -84,6 +266,16 @@ class LexiconStore:
                     tags=["particle_learning", f"{particle.type}", "parsed_metadata"],
                     particle_id=particle.id
                 )
+                added_count += 1
+                
+            if skipped_duplicate_count > 0:
+                self.logger.log(f"Skipped {skipped_duplicate_count} duplicate tokens from particle {particle.id}", "DEBUG", "add_from_particle")
+                
+            return True
+
+        except Exception as e:
+            self.logger.log(f"Error adding from particle: {e}", "ERROR", "add_from_particle")
+            return False
 
 
         except Exception as e:
@@ -92,13 +284,29 @@ class LexiconStore:
 
     async def add_term(self, token, full_phrase=None, definitions=None, context=None,
                       source="unknown", intent=None, term_type=None, tags=None,
-                      scope="external", particle_id=None, particle_embedding=None, **kwargs):
-        """Enhanced add_term with Qdrant memory system - maintains all functionality"""
+                      scope="external", particle_id=None, particle_embedding=None, field_position=None, **kwargs):
+        """Enhanced add_term with Qdrant memory system, deduplication, batching, and field position storage"""
+        
+        # Early deduplication check
+        if not self._check_token_deduplication(token):
+            self.logger.log(f"Token '{token}' already deeply stored, skipping duplicate storage", "DEBUG", "add_term")
+            return self.lexicon.get(token, None)
+        
+        if token in self.lexicon:
+            return self.lexicon[token]
+
         if token is None or token.strip() == "":
             self.logger.log("Cannot add empty token to lexicon", "WARNING", "add_term")
             return None
+            
+        # Cognitive noise filter - skip single characters except meaningful ones
+        if len(token) == 1 and token not in string.punctuation:
+            self.logger.log(f"Skipping single character token '{token}' as cognitive noise", "DEBUG", "add_term")
+            return None
 
         try:
+            LEX_KEY = f"lexicon_{token.lower()}"
+
             full_phrase = full_phrase or token
             entry_id = f"lex_{uuid.uuid4().hex}"  # Updated ID format for Qdrant
             particle_id_for_entry = str(particle_id.item()) if particle_id is not None and hasattr(particle_id, 'size') and particle_id.size > 0 and not isinstance(particle_id, uuid.UUID) else str(particle_id) if particle_id is not None else None
@@ -128,21 +336,38 @@ class LexiconStore:
                 "particle_activation": kwargs.get("particle_activation", 0.0),
                 "learning_context": kwargs.get("learning_context", {}),
                 "semantic_connections": kwargs.get("semantic_connections", []),
+                
+                # Field position data for spatial semantic analysis
+                "field_position": self._process_field_position(field_position, particle_id),
+                "spatial_semantic_data": self._init_spatial_semantic_data(field_position),
+                
                 **kwargs  # Store any additional data without restrictions!
             }
 
             # Process definitions with enhanced structure
-            if definitions and isinstance(definitions, list):
-                for def_item in definitions:
-                    if isinstance(def_item, dict):
-                        new_entry["definitions"].append(def_item)
-                    elif isinstance(def_item, str):
-                        new_entry["definitions"].append({
-                            "text": def_item,
-                            "source": "provided",
-                            "timestamp": datetime.now().isoformat(),
-                            "confidence": 0.9
-                        })
+            if definitions:
+                if isinstance(definitions, list):
+                    for def_item in definitions:
+                        if isinstance(def_item, dict):
+                            new_entry["definitions"].append(def_item)
+                        elif isinstance(def_item, str):
+                            new_entry["definitions"].append({
+                                "text": def_item,
+                                "source": "provided",
+                                "timestamp": datetime.now().isoformat(),
+                                "confidence": 0.9
+                            })
+                elif isinstance(definitions, str):
+                    # Handle string definitions directly
+                    new_entry["definitions"].append({
+                        "text": definitions,
+                        "source": "provided_string",
+                        "timestamp": datetime.now().isoformat(),
+                        "confidence": 0.8
+                    })
+                elif isinstance(definitions, dict):
+                    # Handle dictionary definitions
+                    new_entry["definitions"].append(definitions)
 
             # Check for existing term using Qdrant memory system
             existing = None
@@ -189,26 +414,46 @@ class LexiconStore:
                 for definition in pending:
                     new_entry["definitions"].append(definition)
 
+            # Agent categorization for lexicon entries
+            if self.agent_categorizer:
+                try:
+                    # Check if token appears to be compressed language
+                    is_compressed = (len(token) <= 6 and 
+                                   sum(1 for c in token if c in 'aeiou') < len(token) / 2)
+                    
+                    if is_compressed or context or definitions:
+                        # Request categorization from agent
+                        category_suggestion = kwargs.get('agent_category')
+                        category_result = await self.agent_categorizer.request_categorization(
+                            new_entry, category_suggestion
+                        )
+                        
+                        if category_result and category_result != "pending_agent_categorization":
+                            new_entry["agent_category"] = category_result
+                            new_entry["agent_categorized"] = True
+                            updated_tags.append(f"category:{category_result}")
+                            self.logger.log(f"Categorized lexicon entry '{token}' as '{category_result}'", "DEBUG", "add_term")
+                            
+                except Exception as e:
+                    self.logger.log(f"Categorization failed for '{token}': {e}", "WARNING", "add_term")
+
             
-            # Store in Qdrant memory system with full flexibility
+            # Store in Qdrant memory system using batch system for efficiency
             if self.memory:
-                memory_result = await self.memory.update(
-                    key=f"lexicon_{token}",  # Unique key for lexicon entries
+                # Use batch storage instead of individual memory.update calls
+                await self._add_to_batch(
+                    key=LEX_KEY,  # Unique key for lexicon entries
                     value=new_entry,  # Store the complete entry structure
                     source=source,
                     tags=updated_tags,
-                    memory_type="lexicon",  # This routes to lexicon collection
                     source_particle_id=particle_id,
                     consciousness_level=new_entry.get("consciousness_level", 0.5),
+                    memory_type="lexicon",  # This routes to lexicon collection
                     **kwargs  # Pass through any additional metadata
                 )
                 
-                if memory_result:
-                    self.logger.log(f"Term '{token}' stored in Qdrant lexicon", "INFO", "add_term")
-                else:
-                    self.logger.log(f"Failed to store term '{token}' in memory", "ERROR", "add_term")
-                    return None
-            
+                self.logger.log(f"Added '{token}' to lexicon batch (batch size: {len(self.pending_batch)})", "DEBUG", "add_term")
+                
             # Update local lexicon cache for fast access
             self.lexicon[token] = new_entry
             
@@ -280,7 +525,22 @@ class LexiconStore:
             )
 
     async def get_term(self, token):
-        """Enhanced get_term using Qdrant memory system with local cache"""
+        """Enhanced get_term using memory coordination for caching and performance"""
+        # Try to route through memory coordinator for caching and performance optimization
+        coordinator_result = await self._route_through_coordinator("term_lookup", {
+            "token": token,
+            "operation": "get_term",
+            "consciousness_level": getattr(self, '_current_consciousness_level', 0.5)
+        })
+        
+        if coordinator_result is not None:
+            return coordinator_result
+        
+        # Fallback to direct access if coordinator unavailable
+        return await self._direct_get_term(token)
+    
+    async def _direct_get_term(self, token):
+        """Direct term lookup (fallback method)"""
         try:
             # First check local cache for performance
             if token in self.lexicon:
@@ -288,8 +548,8 @@ class LexiconStore:
                 return self.lexicon[token]
             
             if not self.memory:
-                self.logger.log("Memory bank not available", "ERROR", "get_term")
-                return None
+                self.logger.log("Memory bank not available", "ERROR", "_direct_get_term")
+                return None  # Return None instead of token string
             
             # Query Qdrant memory system
             lexicon_memories = await self.memory.get_memories_by_type("lexicon")
@@ -300,14 +560,19 @@ class LexiconStore:
                     self.lexicon[token] = memory
                     return memory
             
-            return None
+            return None  # Return None instead of token string when not found
             
         except Exception as e:
-            self.logger.log(f"Error getting term {token}: {e}", "ERROR", "get_term")
-            return None
+            self.logger.log(f"Error getting term {token}: {e}", "ERROR", "_direct_get_term")
+            return None  # Return None instead of token string on error
 
     async def get_term_id(self, term):
-        """Get unique ID for term - enhanced for Qdrant system"""
+        """Get unique ID for term - enhanced for Qdrant system with validation"""
+        # Validate term input
+        if not term or not isinstance(term, str) or term.strip() == "" or term.lower() == "none":
+            self.logger.log(f"Invalid term for get_term_id: {term} - skipping", "WARNING", "get_term_id")
+            return None
+            
         try:
             # Check local cache first
             if term in self.lexicon:
@@ -316,14 +581,14 @@ class LexiconStore:
             
             # Query from memory system
             term_data = await self.get_term(term)
-            if term_data:
+            if term_data and isinstance(term_data, dict):
                 return term_data.get("id")
 
             return "Term not found"
             
         except Exception as e:
             self.logger.log(f"Error getting term ID for {term}: {e}", "ERROR", "get_term_id")
-            return None
+            return "Error retrieving term ID"
         
     def get_terms(self, top_n=None):
         """Get all terms from lexicon - enhanced with Qdrant performance"""
@@ -331,14 +596,17 @@ class LexiconStore:
             if not self.memory:
                 self.logger.log("Memory bank not available", "ERROR", "get_terms")
                 return []
-            
-            # Return from local cache if available
-            all_terms = list(self.lexicon.keys())
-            
+                      
+            all_terms = []
+            for key, data in self.lexicon.items():
+                if isinstance(data, dict) and "token" in data:
+                    all_terms.append(data["token"])
+                else:
+                    self.logger.log(f"Unexpected lexicon entry format for key {key}", "WARNING", "get_terms")
             # If cache is empty or insufficient, this will be populated by load_lexicon
             if len(all_terms) == 0:
                 self.logger.log("Local lexicon cache empty, consider calling load_lexicon()", "WARNING", "get_terms")
-            
+
             if top_n and len(all_terms) > top_n:
                 all_terms = all_terms[:top_n]
                 
@@ -349,22 +617,27 @@ class LexiconStore:
             return []
     
     async def get_term_def(self, term):
-        """Get term definitions - enhanced for Qdrant system"""
+        """Get term definitions - enhanced for Qdrant system with validation"""
+        # Validate term input
+        if not term or not isinstance(term, str) or term.strip() == "" or term.lower() == "none":
+            self.logger.log(f"Invalid term for get_term_def: {term} - skipping", "WARNING", "get_term_def")
+            return None
+            
         try:
             term_data = await self.get_term(term)
-            if term_data:
+            if term_data and isinstance(term_data, dict):
                 await self.encounter_existing_term(term)
                 definitions = term_data.get("definitions")
                 if definitions:
                     return definitions
                 else:
                     definition = await self.quick_define(term)
-                    self.lexicon["term"]["definitions"].append(definition)
+                    self.lexicon[term]["definitions"].append(definition)
                     return definition
             
             if term not in self.lexicon:
-                # If not found, attempt to add it
                 self.logger.log(f"Term {term} not found in lexicon", "INFO", "get_term_def")
+                return f"Term {term} not found in lexicon"
 
         except Exception as e:
             self.logger.log(f"Error getting definition for {term}: {e}", "ERROR", "get_term_def")
@@ -380,23 +653,34 @@ class LexiconStore:
             self.logger.log("Loading lexicon from Qdrant memory system...", "INFO", "load_lexicon")
             
             # Load with extended timeout for large lexicons
-            memories =  await self.memory.get_memories_by_type("lexicon", limit=5000)
+            memories =  await self.memory.get_memories_by_type("lexicon", limit=10000)
             
             if memories:
                 loaded_count = 0
                 consciousness_terms = 0
                 
                 for memory in memories:
-                    if isinstance(memory, dict):
-                        token = memory.get("token")
-                        if token:
-                            # Store complete entry data in local cache
-                            self.lexicon[token] = memory
-                            loaded_count += 1
-                            
-                            # Track consciousness-aware terms
-                            if memory.get("consciousness_level", 0) > 0.5:
-                                consciousness_terms += 1
+                    try:
+                        # Handle both dictionary and string memory formats
+                        if isinstance(memory, dict):
+                            token = memory.get("token")
+                            if token:
+                                # Store complete entry data in local cache
+                                self.lexicon[token] = memory
+                                loaded_count += 1
+                                
+                                # Track consciousness-aware terms
+                                if memory.get("consciousness_level", 0) > 0.5:
+                                    consciousness_terms += 1
+                        elif isinstance(memory, str):
+                            # Legacy string format - create basic dictionary entry
+                            self.logger.log(f"Converting legacy string memory entry: {memory[:50]}...", "DEBUG", "load_lexicon")
+                            # Skip string entries for now - they need proper parsing
+                            continue
+                        else:
+                            self.logger.log(f"Unexpected memory type: {type(memory)}", "WARNING", "load_lexicon")
+                    except Exception as entry_error:
+                        self.logger.log(f"Error loading lexicon entry: {entry_error}", "WARNING", "load_lexicon")
                 
                 self.logger.log(
                     f"Loaded {loaded_count} lexicon entries from Qdrant ({consciousness_terms} high-consciousness)", 
@@ -414,17 +698,24 @@ class LexiconStore:
             self.logger.log(f"Lexicon loading traceback:\n{traceback.format_exc()}", "ERROR", "load_lexicon")
 
     def get_term_type(self, term):
-        """Get term type classification - unchanged functionality"""
+        """Get term type classification with coordination optimization"""
         try:
+            # For non-async operations, we can still benefit from cache lookup patterns
+            if self.memory_coordinator and hasattr(self.memory_coordinator, 'term_existence_cache'):
+                # Quick existence check to avoid expensive lookups
+                term_exists = self.memory_coordinator.term_existence_cache.is_term_known(term)
+                if term_exists is False:
+                    return "unknown"
+            
             if term in self.lexicon:
                 asyncio.create_task(self.encounter_existing_term(term))
                 return self.lexicon[term].get('type', 'unknown')
             else:
                 self.logger.log(f"Term {term} not found in lexicon when getting type.", "WARNING", "get_term_type")
-                return 'unknown'
+                return "unknown"
         except Exception as e:
             self.logger.log(f"Error getting term type: {e}", "ERROR", "get_term_type")
-            return None
+            return "unknown"
 
     def get_content(self):
         """Enhanced content summary with consciousness insights"""
@@ -587,4 +878,125 @@ class LexiconStore:
         except Exception as e:
             self.logger.log(f"Error generating consciousness insights: {e}", "ERROR", "get_consciousness_insights")
             return {"error": str(e)}
+    
+    def _process_field_position(self, field_position, particle_id):
+        """Process and validate field position data for storage"""
+        try:
+            # If explicit position provided, use it
+            if field_position and isinstance(field_position, (list, tuple)) and len(field_position) >= 3:
+                return {
+                    "x": float(field_position[0]),
+                    "y": float(field_position[1]), 
+                    "z": float(field_position[2]),
+                    "source": "explicit",
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            # Try to get position from particle if available
+            if particle_id and self.memory and hasattr(self.memory, 'field') and self.memory.field:
+                try:
+                    particles = self.memory.field.get_all_particles()
+                    for particle in particles:
+                        if str(particle.id) == str(particle_id):
+                            if hasattr(particle, 'position'):
+                                particle_pos = particle.position
+                                
+                                # Handle both object format (.x, .y, .z) and numpy array format ([x, y, z])
+                                if hasattr(particle_pos, 'x'):
+                                    # Object format with .x, .y, .z attributes
+                                    x, y, z = float(particle_pos.x), float(particle_pos.y), float(particle_pos.z)
+                                elif hasattr(particle_pos, '__len__') and len(particle_pos) >= 3:
+                                    # Numpy array or list format [x, y, z]
+                                    x, y, z = float(particle_pos[0]), float(particle_pos[1]), float(particle_pos[2])
+                                else:
+                                    # Unknown position format, skip this particle
+                                    continue
+                                
+                                return {
+                                    "x": x,
+                                    "y": y, 
+                                    "z": z,
+                                    "source": "particle",
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            break
+                except Exception as e:
+                    self.logger.log(f"Error extracting position from particle {particle_id}: {e}", "DEBUG", "_process_field_position")
+            
+            # Return None if no position available
+            return None
+            
+        except Exception as e:
+            self.logger.log(f"Error processing field position: {e}", "WARNING", "_process_field_position")
+            return None
+    
+    def _init_spatial_semantic_data(self, field_position):
+        """Initialize spatial semantic analysis data structure"""
+        return {
+            "has_position": field_position is not None,
+            "spatial_clusters": [],
+            "nearest_neighbors": [],
+            "semantic_distance_cache": {},
+            "last_spatial_analysis": None,
+            "spatial_significance": 0.0
+        }
+    
+    def get_tokens_with_positions(self, limit=None):
+        """Get lexicon tokens that have field positions for spatial analysis"""
+        try:
+            positioned_tokens = []
+            
+            for token, data in self.lexicon.items():
+                if isinstance(data, dict):
+                    field_pos = data.get("field_position")
+                    if field_pos and isinstance(field_pos, dict) and all(k in field_pos for k in ['x', 'y', 'z']):
+                        positioned_tokens.append({
+                            "token": token,
+                            "position": field_pos,
+                            "consciousness_level": data.get("consciousness_level", 0.5),
+                            "times_encountered": data.get("times_encountered", 1),
+                            "type": data.get("type", "unknown")
+                        })
+            
+            # Sort by consciousness level (most conscious first)
+            positioned_tokens.sort(key=lambda x: x["consciousness_level"], reverse=True)
+            
+            if limit:
+                positioned_tokens = positioned_tokens[:limit]
+                
+            return positioned_tokens
+            
+        except Exception as e:
+            self.logger.log(f"Error getting positioned tokens: {e}", "ERROR", "get_tokens_with_positions")
+            return []
+    
+    def calculate_spatial_semantic_distance(self, token1, token2):
+        """Calculate semantic distance between two tokens using their field positions"""
+        try:
+            if token1 not in self.lexicon or token2 not in self.lexicon:
+                return None
+                
+            pos1 = self.lexicon[token1].get("field_position")
+            pos2 = self.lexicon[token2].get("field_position")
+            
+            if not pos1 or not pos2:
+                return None
+                
+            # Calculate Euclidean distance
+            dx = pos1["x"] - pos2["x"]
+            dy = pos1["y"] - pos2["y"] 
+            dz = pos1["z"] - pos2["z"]
+            
+            distance = (dx**2 + dy**2 + dz**2)**0.5
+            
+            return {
+                "distance": distance,
+                "tokens": [token1, token2],
+                "positions": [pos1, pos2],
+                "calculated_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.log(f"Error calculating spatial distance between {token1} and {token2}: {e}", "ERROR", "calculate_spatial_semantic_distance")
+            return None
 

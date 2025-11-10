@@ -113,6 +113,25 @@ class AgentCore:
         self.inference_engine = InferenceEngine()
         self.log("InferenceEngine imported successfully", context="AgentCore.__init__")
 
+        self.log("Importing Semantic Gravity Analyzer...")
+        from apis.agent.cognition.linguistics.semantic_gravity_analyzer import SemanticGravityAnalyzer
+        self.semantic_gravity_analyzer = SemanticGravityAnalyzer(
+            memory = self.memory_bank, 
+            field = self.particle_field
+        )
+        self.log("SemanticGravityAnalyzer imported successfully", context="AgentCore.__init__")
+
+        self.log("Importing Categorizer and bridge...")
+        from apis.agent.cognition.linguistics.agent_categorizer import AgentCategorizer, CategoryBridge
+        self.agent_categorizer = AgentCategorizer(
+            memory=self.memory_bank, 
+            field=self.particle_field, 
+            gravity_analyzer=self.semantic_gravity_analyzer
+        )
+        self.category_bridge = CategoryBridge(self.agent_categorizer)
+        self.log("AgentCategorizer and CategoryBridge imported successfully", context="AgentCore.__init__")
+
+
         self.log("CognitionLoop imported successfully", context="AgentCore.__init__")
 
         self.log("Importing research modules...")
@@ -133,6 +152,10 @@ class AgentCore:
         self.agent_anchor.field = self.particle_field
         # memory threading
         self.memory_bank.field = self.particle_field
+        self.memory_bank.agent_categorizer = self.agent_categorizer
+        self.memory_bank.category_bridge = self.category_bridge
+        # lexicon categorization threading - link to memory bank's categorization system
+        self.lexicon_store.agent_categorizer = self.agent_categorizer
         # field threading
         self.particle_field.voice = self.meta_voice
         # voice threading if in llm-extension mode
@@ -202,31 +225,41 @@ class AgentCore:
     async def run(self):
         """Main orchestration method - replaces run_agent()"""
         try:
-            self.log("Agent Core initializing cognitive processes...", context="run")
+            self.log("Agent Core initializing cognitive processes...", "SYSTEM", context="run")
             
             await self.initialize()
-            #await self.memory_bank.verify_memory_system_health()               # **DEBUG** for testing DB health in the case of issues
-            
+            self.log("Initialization complete, starting cognitive loops...", "SYSTEM", context="run")            
 
             # Restoring previous state
             try:
                 await api.handle_startup_restoration()
-                self.log("Previous cognitive state restored", context="run")
+                self.log("Previous cognitive state restored", "SYSTEM", context="run")
             except Exception as e:
                 self.log(f"State restoration error: {e}", level="ERROR", context="run")
                 self.log(f"Full traceback:\n{traceback.format_exc()}")
                 raise Exception(f"Error: {e} \n\n Traceback: {traceback.format_exc()}")
 
-            # Ensure lexicon is loaded
+            # Finish memory setup
             try:
+                self.memory_bank._setup_memory_coordination()
+                await self.memory_bank._init_background_processor()
+                self.log("Memory coordination setup complete", "SYSTEM", context="run")
+            except Exception as e:
+                self.log(f"Memory coordination error: {e}", level="ERROR", context="run")
+                self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="run")
+                raise Exception(f"Error: {e} \n\n Traceback: {traceback.format_exc()}")
+
+            # Finish lexicon setup
+            try:
+                self.lexicon_store._setup_memory_coordination()
                 await self.lexicon_store.load_lexicon()
-                self.log("Lexicon loaded successfully", context="run")
+                self.log("Lexicon loaded successfully", "SYSTEM", context="run")
             except Exception as e:
                 self.log(f"Lexicon loading error: {e}", level="ERROR", context="run")
 
             # Log module availability
             module_status = {
-                "model_handler": "ONLINE" if self.model_handler else "OFFLINE",
+                "model_handler": "ONLINE" if self.model_handler else "OFFLINE" if self.mode == "llm-extension" else "N/A",
                 "cognition_loop": "ONLINE" if self.cognition_loop else "OFFLINE",
                 "particle_field": "ONLINE" if self.particle_field else "OFFLINE",
                 "memory_bank": "ONLINE" if self.memory_bank else "OFFLINE",
@@ -234,10 +267,10 @@ class AgentCore:
                 "lexicon": "ONLINE" if self.lexicon_store else "OFFLINE",
                 "adaptive_engine": "ONLINE" if self.adaptive_engine else "OFFLINE",
             }    
-            self.log(f"Module Status: {module_status}", context="initialize_cognitive_systems")
+            self.log(f"Module Status: {module_status}", "SYSTEM", context="initialize_cognitive_systems")
             
             # Start the cognitive loops
-            self.log("Starting cognitive loops...", context="run")
+            self.log("Starting cognitive loops...", "SYSTEM", context="run")
             self.cognition_loop.conscious_active = True
             self.particle_field._update_active = True
 
@@ -332,6 +365,86 @@ class AgentCore:
         self.log("External save requested", context="save")
         asyncio.run(api.handle_manual_state_save())
         
+    def get_background_processor_stats(self):
+        """Get statistics from the semantic gravity background processor"""
+        try:
+            if (hasattr(self.memory_bank, 'agent_categorizer') and 
+                self.memory_bank.agent_categorizer and 
+                hasattr(self.memory_bank.agent_categorizer, 'background_processor') and
+                self.memory_bank.agent_categorizer.background_processor and
+                hasattr(self.memory_bank.agent_categorizer.background_processor, 'get_processor_stats')):
+                
+                return self.memory_bank.agent_categorizer.background_processor.get_processor_stats()
+            else:
+                return {"status": "background_processor_not_available"}
+        except Exception as e:
+            self.log(f"Error getting background processor stats: {e}", "ERROR", "get_background_processor_stats")
+            return {"status": "error", "error": str(e)}
+    
+    def get_translation_suggestions(self, compressed_token=None):
+        """Get translation suggestions for compressed tokens"""
+        try:
+            if (hasattr(self.memory_bank, 'agent_categorizer') and 
+                self.memory_bank.agent_categorizer and 
+                hasattr(self.memory_bank.agent_categorizer, 'get_translation_suggestions')):
+                
+                if compressed_token:
+                    return {compressed_token: self.memory_bank.agent_categorizer.get_translation_suggestions(compressed_token)}
+                else:
+                    # Get suggestions for all tracked tokens
+                    if (self.memory_bank.agent_categorizer.background_processor and 
+                        hasattr(self.memory_bank.agent_categorizer.background_processor, 'compressed_token_cache')):
+                        
+                        all_suggestions = {}
+                        for token in self.memory_bank.agent_categorizer.background_processor.compressed_token_cache.keys():
+                            suggestions = self.memory_bank.agent_categorizer.get_translation_suggestions(token)
+                            if suggestions:
+                                all_suggestions[token] = suggestions
+                        return all_suggestions
+                    return {}
+            else:
+                return {"status": "translation_system_not_available"}
+        except Exception as e:
+            self.log(f"Error getting translation suggestions: {e}", "ERROR", "get_translation_suggestions")
+            return {"status": "error", "error": str(e)}
+    
+    def get_categorization_stats(self):
+        """Get categorization system statistics"""
+        try:
+            if (hasattr(self.memory_bank, 'agent_categorizer') and 
+                self.memory_bank.agent_categorizer):
+                
+                categorizer = self.memory_bank.agent_categorizer
+                return {
+                    "agent_categories": len(categorizer.agent_categories),
+                    "category_translations": len(categorizer.category_translations),
+                    "category_usage_stats": dict(categorizer.category_usage_stats),
+                    "auto_categorization_rules": len(categorizer.auto_categorization_rules),
+                    "category_evolution_entries": len(categorizer.category_evolution_log),
+                    "status": "active"
+                }
+            else:
+                return {"status": "categorization_system_not_available"}
+        except Exception as e:
+            self.log(f"Error getting categorization stats: {e}", "ERROR", "get_categorization_stats")
+            return {"status": "error", "error": str(e)}
+    
+    def get_all_translation_mappings(self):
+        """Get all translation mappings with metadata for dashboard display"""
+        try:
+            if (hasattr(self.memory_bank, 'agent_categorizer') and 
+                self.memory_bank.agent_categorizer and 
+                hasattr(self.memory_bank.agent_categorizer, 'background_processor') and
+                self.memory_bank.agent_categorizer.background_processor and
+                hasattr(self.memory_bank.agent_categorizer.background_processor, 'get_all_translation_mappings')):
+                
+                return self.memory_bank.agent_categorizer.background_processor.get_all_translation_mappings()
+            else:
+                return {"status": "translation_mappings_not_available"}
+        except Exception as e:
+            self.log(f"Error getting all translation mappings: {e}", "ERROR", "get_all_translation_mappings")
+            return {"status": "error", "error": str(e)}
+        
 
 
 class AgentAnchor:
@@ -410,7 +523,8 @@ class AgentAnchor:
             "cognitive_event": self.handle_cognitive_event,
             "memory_event": self.handle_memory_event,
             "reasoning_cycle": self.handle_reasoning_cycle,
-            "learning_moment_detected": self.handle_learning_moment
+            "learning_moment_detected": self.handle_learning_moment,
+            "particle_structure_introspection": self.handle_safe_particle_introspection
         })
     
     async def emit_event(self, event_type, data=None, source="unknown", priority=None):
@@ -648,9 +762,10 @@ class AgentAnchor:
         return False
 
     async def handle_particle_created(self, event, core_particle = None):
-        """Handle particle creation events"""
+        """Handle particle creation events with translation framework integration"""
         particle_data = event["data"]
         try:
+            # Spawn the particle as before
             await self.field.spawn_particle(
                 type=particle_data.get("type", "unknown"),
                 metadata=particle_data.get("metadata", {}),
@@ -659,12 +774,77 @@ class AgentAnchor:
                 source_particle_id=core_particle.id if core_particle else None,
                 emit_event=False  # Avoid recursive event emission
             )
+            
+            # NEW: Trigger translation framework for lingual particles
+            particle_type = particle_data.get("type", "unknown")
+            metadata = particle_data.get("metadata") or {}  # Handle None metadata
+            
+            if particle_type == "lingual" or metadata.get("semantic_gravity", False):
+                # Extract tokens for translation analysis
+                await self._trigger_translation_analysis_for_particle(particle_data)
+            
             self.log(f"Particle created: {particle_data.get('particle_id', 'unknown')}", "DEBUG", context="handle_particle_created")
             return True
         except Exception as e:
             self.log(f"Error creating particle: {e}", "ERROR", context="handle_particle_created")
             self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_particle_created")
             return False
+
+    async def _trigger_translation_analysis_for_particle(self, particle_data):
+        """Trigger translation analysis for lingual particle data"""
+        try:
+            if not hasattr(self, 'memory_bank') or not self.memory_bank:
+                return
+                
+            if not hasattr(self.memory_bank, 'agent_categorizer') or not self.memory_bank.agent_categorizer:
+                return
+                
+            metadata = particle_data.get("metadata") or {}  # Handle None metadata
+            
+            # Extract potential tokens from particle metadata
+            tokens_to_analyze = []
+            context_data = {
+                "particle_id": particle_data.get("particle_id"),
+                "particle_type": particle_data.get("type"),
+                "usage_context": "particle_creation",
+                "source": "particle_event"
+            }
+            
+            # Check for direct token field
+            if "token" in metadata:
+                tokens_to_analyze.append(metadata["token"])
+                
+            # Check for semantic content 
+            if "semantic_content" in metadata:
+                semantic_content = metadata["semantic_content"]
+                if isinstance(semantic_content, str):
+                    # Extract words that might be compressed tokens
+                    potential_tokens = semantic_content.split()
+                    tokens_to_analyze.extend([t.strip('.,!?;:"()[]{}') for t in potential_tokens if len(t) <= 15])
+                elif isinstance(semantic_content, dict) and "token" in semantic_content:
+                    tokens_to_analyze.append(semantic_content["token"])
+            
+            # Check for compressed_type or compression indicators
+            if metadata.get("compressed_type") or metadata.get("semantic_gravity"):
+                # Look for any string values that might contain tokens
+                for key, value in metadata.items():
+                    if isinstance(value, str) and len(value) <= 20 and value.isalpha():
+                        tokens_to_analyze.append(value)
+            
+            # Remove duplicates and filter
+            unique_tokens = list(set(tokens_to_analyze))
+            
+            # Trigger observation for each meaningful token
+            for token in unique_tokens:
+                if token and len(token.strip()) > 1:
+                    try:
+                        await self.memory_bank.agent_categorizer.observe_agent_communication(token, context_data)
+                        self.log(f"Triggered translation analysis for particle token: '{token}'", "DEBUG", context="_trigger_translation_analysis_for_particle")
+                    except Exception as e:
+                        self.log(f"Error observing token '{token}': {e}", "WARNING", context="_trigger_translation_analysis_for_particle")
+                        
+        except Exception as e:
+            self.log(f"Error in translation analysis trigger: {e}", "ERROR", context="_trigger_translation_analysis_for_particle")
 
     
     async def handle_user_input(self, event, core_particle = None):
@@ -821,6 +1001,56 @@ class AgentAnchor:
             self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_learning_moment")
             return False
 
+    async def handle_safe_particle_introspection(self, event, core_particle=None):
+        """Handle safe particle structure introspection for self-awareness without segfaults"""
+        introspection_data = event.get("data", {})
+        max_particles = introspection_data.get("max_particles", 5)
+        
+        self.log(f"Safe particle introspection requested (max: {max_particles})", "DEBUG", context="handle_safe_particle_introspection")
+        
+        try:
+            if not self.particle_field:
+                return "No particle field available for introspection"
+            
+            # Get a safe sample of particles
+            all_particles = self.particle_field.get_all_particles()
+            alive_particles = [p for p in all_particles if p.id in self.particle_field.alive_particles]
+            
+            # Limit to prevent overwhelming
+            sample_particles = alive_particles[:max_particles]
+            
+            structure_summaries = []
+            for particle in sample_particles:
+                try:
+                    # Use safe structure summary from voice.py
+                    if hasattr(self.meta_voice, '_create_safe_particle_summary'):
+                        summary = self.meta_voice._create_safe_particle_summary(particle)
+                        structure_summaries.append(summary)
+                except Exception as particle_error:
+                    self.log(f"Error summarizing particle {getattr(particle, 'id', 'unknown')}: {particle_error}")
+                    continue
+            
+            # Create safe aggregate summary
+            introspection_result = {
+                "total_particles": len(all_particles),
+                "alive_particles": len(alive_particles),
+                "sample_summaries": structure_summaries[:max_particles],  # Ensure limit
+                "field_status": "active" if alive_particles else "dormant",
+                "introspection_safe": True
+            }
+            
+            # Store result for voice reflection access
+            if hasattr(self, 'last_introspection_result'):
+                self.last_introspection_result = introspection_result
+            
+            self.log(f"Safe introspection completed: {len(structure_summaries)} particle summaries generated", "INFO", context="handle_safe_particle_introspection")
+            return introspection_result
+            
+        except Exception as e:
+            self.log(f"Error during safe particle introspection: {e}", "ERROR", context="handle_safe_particle_introspection")
+            self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="handle_safe_particle_introspection")
+            return "Error during introspection - safety protocols engaged"
+
     async def handle_cognitive_event(self, event, core_particle = None):
         """Handle general cognitive events"""
         self.log(f"Cognitive event: {event['data']}", "DEBUG", context="handle_cognitive_event")
@@ -832,6 +1062,81 @@ class AgentAnchor:
         self.log(f"Unknown event type: {event['type']}", "WARNING", context="handle_unknown_event")
         # TODO
         return None
+    
+    async def handle_particle_structure_introspection(self, event, core_particle=None):
+        """Handle safe particle structure introspection for self-awareness"""
+        try:
+            self.log("Processing safe particle structure introspection request", "DEBUG", context="handle_particle_structure_introspection")
+            
+            event_data = event.get('data', {})
+            max_particles = event_data.get('max_particles', 5)
+            request_type = event_data.get('request_type', 'safe_structure_summary')
+            
+            if not self.particle_field:
+                return "No particle field available for introspection"
+            
+            # Get a safe sample of particles for structure awareness
+            alive_particles = [p for p in self.particle_field.particles if p.id in self.particle_field.alive_particles]
+            
+            if not alive_particles:
+                return "No active particles available for introspection"
+            
+            # Limit to prevent segfaults and select diverse particle types
+            import random
+            sample_particles = random.sample(alive_particles, min(max_particles, len(alive_particles)))
+            
+            structure_summaries = []
+            for particle in sample_particles:
+                try:
+                    # Create safe summary without full structure parsing
+                    safe_summary = {
+                        "id": str(getattr(particle, 'id', 'unknown'))[:8],
+                        "type": str(getattr(particle, 'type', 'unknown')),
+                        "energy": round(float(getattr(particle, 'energy', 0.0)), 3),
+                        "activation": round(float(getattr(particle, 'activation', 0.0)), 3),
+                        "alive": bool(getattr(particle, 'alive', False))
+                    }
+                    
+                    # Add key position info only (prevent full 12D processing)
+                    if hasattr(particle, 'position') and particle.position is not None:
+                        try:
+                            pos = particle.position
+                            if hasattr(pos, '__len__') and len(pos) >= 3:
+                                safe_summary["spatial"] = {
+                                    "x": round(float(pos[0]), 3),
+                                    "y": round(float(pos[1]), 3),
+                                    "z": round(float(pos[2]), 3)
+                                }
+                                if len(pos) > 8:
+                                    safe_summary["valence"] = round(float(pos[8]), 3)
+                        except (IndexError, TypeError, ValueError):
+                            safe_summary["spatial"] = "position_unavailable"
+                    
+                    # Add safe metadata keys only (no full content)
+                    if hasattr(particle, 'metadata') and isinstance(particle.metadata, dict):
+                        meta_keys = list(particle.metadata.keys())[:3]  # Only first 3 keys
+                        safe_summary["metadata_keys"] = meta_keys
+                    
+                    structure_summaries.append(safe_summary)
+                    
+                except Exception as particle_error:
+                    self.log(f"Error processing particle {getattr(particle, 'id', 'unknown')}: {particle_error}")
+                    structure_summaries.append({"id": "error", "type": "processing_failed"})
+            
+            # Create safe aggregate summary
+            result = {
+                "total_particles": len(alive_particles),
+                "sampled_particles": len(structure_summaries),
+                "structure_samples": structure_summaries,
+                "introspection_timestamp": time.time()
+            }
+            
+            self.log(f"Safe particle structure introspection completed: {len(structure_summaries)} particles analyzed", "INFO", context="handle_particle_structure_introspection")
+            return str(result)[:500]  # Limit string length to prevent issues
+            
+        except Exception as e:
+            self.log(f"Error in particle structure introspection: {e}", "ERROR", context="handle_particle_structure_introspection")
+            return f"introspection_error: {str(e)[:100]}"
     
     def register_handler(self, event_type, handler):
         """Register a custom event handler"""

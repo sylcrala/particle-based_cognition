@@ -141,6 +141,16 @@ class APIRegistry:
                     print("Preserving learning adaptations...")
                     await adaptive.save_learning_state()
             
+            # Save semantic gravity background processor translation mappings
+            if "agent" in self.apis:
+                agent = self.get_api("agent")
+                if agent and hasattr(agent, 'categorizer') and agent.categorizer:
+                    categorizer = agent.categorizer
+                    if hasattr(categorizer, 'background_processor') and categorizer.background_processor:
+                        print("Saving semantic gravity translation mappings...")
+                        save_result = await categorizer.background_processor.save_current_state()
+                        print(f"Saved {save_result.get('mappings_saved', 0)} translation mappings")
+            
             # Phase 4: System state snapshot
             if "logger" in self.apis:
                 logger = self.get_api("logger")

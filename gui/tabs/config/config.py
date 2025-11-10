@@ -154,3 +154,7 @@ class ConfigTab(QWidget):
             layout.addWidget(value)
 
         return widget
+    
+    def save_settings(self):
+        """Saves the current settings - TODO"""
+        pass
