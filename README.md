@@ -19,10 +19,13 @@ To install and set up this repository, please run the following:
 
 Prior to your first launch, please navigate to ./shared_services/config.py and update any required settings
 
-If you plan on using the engine in "cog-growth" mode, where all knowledge accumulation happens through experiential growth, then you may skip the following steps.
+I recommend sticking to "cog-growth" mode, if you want to see the full depth of the engine and it's capabilities. In this mode, you start out with essentially the DNA that the agent grows from (this engine); there is no existing database finetuned into the engine. There are some external resource modules used as learning sources, accessed in various scenarios (like internal reflection loops, during a conversation, when learning a new topic, etc).
 
-Otherwise, if you plan on using the engine in "llm-extension" mode, please download your preferred model and place the directory within ./models/, then rename the models directory to "core"
+
+If you plan on testing the engine in "llm-extension" mode, please download Mistral 7b Instruct v.02 and place the directory within ./models/, then rename the models directory to "core"
  - The file path for your model directory should look like this: "<directory you installed to>/models/core/<all your model files here>"
+
+At the moment, the model handler only supports Mistral 7b Instruct v0.2 as that was the main model I used when initially exploring locally hosted LLMs. Support hasn't been extended yet because I'm planning an overhaul of the "modes" system after I finish the current linguistic system update and GUI; more details can be found in PLANNING.md
 
 
 ## Launch Instructions
@@ -68,8 +71,14 @@ This project is licensed under:
 
 **Quick Summary**: Open source for research/personal use. Commercial use requires separate licensing after careful consideration. No military/surveillance applications.
 
+For questions or concerns, please reach out to <contact@sylcrala.xyz>
+
+## Support development
+
+If you want to support me or the development of this project and many others like it, please star the repository and consider donating through my paypal <3
+
 
 --
 
+made with love by sylcrala :)
 
-For questions or concerns, please reach out to <contact@sylcrala.xyz>
