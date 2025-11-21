@@ -32,9 +32,16 @@ import traceback
 
 
 class Particle:
-    def __init__(self, id=None, type="default", metadata=None, energy=0.0, activation=0.0, AE_policy="reflective",  **kwargs):
+    def __init__(self, id=None, type="default", metadata=None, energy=0.0, activation=0.0, AE_policy="reflective", temp=False, temp_purpose=None, **kwargs):
 
-        self.id = uuid.uuid4() if id is None else id
+        if temp:
+            # Generate purpose-aware temp ID
+            purpose_tag = f"_{temp_purpose}" if temp_purpose else ""
+            self.id = f"temp_{type}{purpose_tag}_{uuid.uuid4().hex[:8]}_{int(dt.datetime.now().timestamp())}" if id is None else id
+            self.temp_purpose = temp_purpose  # Store temp purpose for specialized behavior
+        else:
+            self.id = uuid.uuid4() if id is None else id
+            self.temp_purpose = None
         self.name = f"Particle-{self.id}"
         self.config = api.get_api("config")
         self.agent_name = self.config.agent_name if self.config else "Unknown"
@@ -56,10 +63,17 @@ class Particle:
         self.metadata.setdefault("agent_motivation", "To explore and understand myself and the world around me.")
         self.metadata.setdefault("circadian_phase", self.get_circadian_phase())
 
+        self.persistence_lvl = "temporary" if temp else "permanent"  # "temporary" or "permanent" - defaults to permanent
+        
+        # Enhanced temp particle initialization with purpose-specific defaults
+        if temp:
+            self._apply_temp_defaults(temp_purpose, energy, activation)
 
         self.velocity = np.zeros(12, dtype=np.float32)
         self.activation = activation or 0.0
+        self.activation = min(max(self.activation, 0.0), 1.0)  # Ensure activation is between 0 and 1
         self.energy = energy or random.uniform(0.1, 1.0)
+        self.energy = min(max(self.energy, -1.0), 1.0)  # Ensure energy is between -1 and 1
         self.policy = AE_policy or random.choice(["cooperative", "avoidant", "chaotic", "inquisitive", "dormant", "disruptive", "reflective", "emergent"])
         self.state = {}
         self.active = True
@@ -109,6 +123,7 @@ class Particle:
             self.activation = 0.0
 
 
+
     def log(self, message, level = None, context = None, source = None):
         if source != None:
             source = "BaseParticle(frame)"
@@ -140,40 +155,129 @@ class Particle:
 
         return [round(math.cos(angle), 3), round(math.sin(angle), 3)]
 
+    def _apply_temp_defaults(self, temp_purpose, base_energy, base_activation):
+        """Apply purpose-specific defaults and valence influences for temp particles"""
+        if not temp_purpose:
+            return
+            
+        # Purpose-specific configurations
+        purpose_configs = {
+            "spatial_search": {"energy": 0.1, "activation": 0.05, "valence_bias": 0.0},
+            "hypothesis_test": {"energy": 0.3, "activation": 0.4, "valence_bias": 0.2},  # Slightly optimistic
+            "memory_query": {"energy": 0.8, "activation": 0.9, "valence_bias": 0.1},
+            "semantic_analysis": {"energy": 0.1, "activation": 0.2, "valence_bias": 0.0},
+            "position_generation": {"energy": 0.05, "activation": 0.1, "valence_bias": 0.0},
+            "embedding_generation": {"energy": 0.02, "activation": 0.05, "valence_bias": 0.0},
+        }
+        
+        config = purpose_configs.get(temp_purpose, {"energy": base_energy, "activation": base_activation, "valence_bias": 0.0})
+        
+        # Apply purpose-specific energy/activation if not explicitly set
+        if base_energy == 0.0:  # Use default if not specified
+            self.energy = config["energy"]
+        if base_activation == 0.0:  # Use default if not specified  
+            self.activation = config["activation"]
+            
+        # Apply valence bias based on purpose (influences emotional positioning)
+        if config["valence_bias"] != 0.0:
+            self.position[8] = np.clip(self.position[8] + config["valence_bias"], -1.0, 1.0)  # v dimension
+
+    def _get_temp_decay_rate(self):
+        """Get purpose-specific decay rates for temp particles"""
+        if not hasattr(self, 'temp_purpose') or not self.temp_purpose:
+            return {"energy": 0.8, "activation": 0.95}  # Default temp decay
+            
+        # Purpose-specific decay rates
+        decay_configs = {
+            "spatial_search": {"energy": 0.5, "activation": 0.7},      # Very fast decay - short lived
+            "hypothesis_test": {"energy": 0.85, "activation": 0.9},    # Moderate decay - needs time to test
+            "memory_query": {"energy": 0.9, "activation": 0.95},       # Slow decay - complex queries take time
+            "semantic_analysis": {"energy": 0.75, "activation": 0.85}, # Fast decay - quick analysis
+            "position_generation": {"energy": 0.6, "activation": 0.8}, # Fast decay - quick positioning
+            "embedding_generation": {"energy": 0.5, "activation": 0.7}, # Very fast - immediate use
+        }
+        
+        return decay_configs.get(self.temp_purpose, {"energy": 0.8, "activation": 0.95})
+
+    def _apply_temp_purpose_behavior(self):
+        """Apply specialized behaviors based on temp particle purpose"""
+        if not hasattr(self, 'temp_purpose') or not self.temp_purpose:
+            return
+            
+        valence = self.position[8]  # v dimension
+        frequency = self.position[6]  # f dimension
+        
+        if self.temp_purpose == "hypothesis_test":
+            # Hypothesis particles get valence-based behavior modulation
+            if valence > 0.5:  # Very positive hypothesis
+                self.activation *= 1.02  # Slight activation boost
+                # Increase frequency to make it more "vibrant"
+                self.position[6] = np.clip(frequency + 0.1, -1.0, 1.0)
+            elif valence < -0.5:  # Very negative hypothesis
+                self.activation *= 0.98  # Slight activation reduction
+                # Decrease frequency to make it more "subdued"
+                self.position[6] = np.clip(frequency - 0.1, -1.0, 1.0)
+                
+        elif self.temp_purpose == "memory_query":
+            # Memory query particles benefit from positive emotional context
+            if valence > 0.0:
+                self.energy *= 1.01  # Slight energy bonus for positive queries
+                
+        elif self.temp_purpose == "spatial_search":
+            # Spatial search particles are utility-focused, minimize emotional interference
+            self.position[8] *= 0.5  # Reduce valence influence
+            self.position[6] *= 0.5  # Reduce frequency influence
+
     async def update(self):
         for i in range(12):
-            self.position[i] += self.velocity[i] * 0.05
             self.velocity[i] *= 0.95
-        self.activation *= 0.98
+
+        # stat boosts based on intent
+        if self.position[10] > 0.7:  # High intent
+            self.activation *= 1.02  
+            self.energy *= 1.01      
+            #self.position[6] = np.clip(self.position[6] + 0.05, -1.0, 1.0)  # Increase frequency for high intent
+        elif 0.3 <= self.position[10] <= 0.7:  # Moderate intent
+            self.activation *= 0.98  
+            self.energy *= 0.99      
+        elif self.position[10] < 0.3:  # Low intent
+            self.activation *= 0.95  
+            self.energy *= 0.97      
+            #self.position[6] = np.clip(self.position[6] - 0.05, -1.0, 1.0)  # Decrease frequency for low intent
 
         now = dt.datetime.now().timestamp()
         self.t = now  # update localized time
         self.position[5] = now - self.position[3]
         self.last_updated = now
 
-        if self.type == "memory":
-            self.energy *= 0.925
-            self.activation *= 0.95
+        if self.persistence_lvl == "permanent":
+            self.alive = True
+            self.energy = 1.0
+            self.activation *= 0.99
 
-            if self.energy < 0.001:
-                self.alive = False
+        elif self.persistence_lvl == "temporary":
+            # Enhanced temp core behavior with purpose-specific decay
+            temp_decay = self._get_temp_decay_rate()
+            self.energy *= temp_decay["energy"]
+            self.activation *= temp_decay["activation"]
+            
+            # Valence-influenced temp particle behavior
+            if hasattr(self, 'temp_purpose') and self.temp_purpose == "hypothesis_test":
+                # Hypothesis test particles get valence-based longevity
+                valence = self.position[8]  # v dimension
+                if valence > 0.3:  # Positive hypothesis gets longer life
+                    self.energy *= 1.05  # Slight energy boost
+                elif valence < -0.3:  # Negative hypothesis decays faster
+                    self.energy *= 0.9   # Faster decay
 
-        elif self.type == "core":
-            if self.persistence_lvl == "permanent":
-                self.alive = True
-                self.energy = 1.0
-                self.activation *= 0.99
+            # Purpose-specific temp particle behaviors
+            if hasattr(self, 'temp_purpose') and self.temp_purpose:
+                self._apply_temp_purpose_behavior()
 
-            elif self.persistence_lvl == "temporary":
-                self.energy *= 0.8
-                self.activation *= 0.95
 
-        elif self.energy < 0.001:
+
+        if self.energy < 0.001:
             self.alive = False
-
-        else:
-            self.energy *= 0.925
-            self.activation *= 0.95
 
         self.vitality = await self.vitality_score()
         self.metadata["circadian_phase"] = self.get_circadian_phase()
@@ -979,7 +1083,18 @@ class Particle:
         except Exception as e:
             return 0.1  # Default low score on error
 
-
+    ## Temporary particle utility functions
+    def expire(self):
+        """Manually expire the particle - only available for particles with a persistence level of "temporary"."""
+        if self.persistence != "temporary":
+            self.log(f"Attempted to expire non-temporary particle {self.id}", "WARNING", "expire")
+            return
+        
+        self.alive = False
+        self.active = False
+        self.energy = 0.0
+        self.activation = 0.0
+        self.log(f"Particle {self.id} has expired", "INFO", "expire")
 
 
 

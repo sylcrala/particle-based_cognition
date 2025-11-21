@@ -306,12 +306,24 @@ class AdaptiveDistanceEngine:
         #from models.persistent_identity_kit.cognitive.particle_engine import batch_hyper_distance_matrix
 
         # Convert the input text to a temporary particle for comparison
-        temp_lp = LingualParticle(
-            token=text,
-            content=text,
-            source="meta_compare",
-            temporary=True
-        )
+        # Check if we have field access for proper temp particle spawning
+        if hasattr(self, 'field') and self.field:
+            # Use field's spawn_particle with temp=True (this would be async though)
+            # For now, fall back to direct creation with temp flag
+            temp_lp = LingualParticle(
+                token=text,
+                content=text,
+                source="meta_compare",
+                temp=True  # Use temp=True instead of temporary=True
+            )
+        else:
+            # Direct creation when no field access
+            temp_lp = LingualParticle(
+                token=text,
+                content=text,
+                source="meta_compare",
+                temp=True  # Use temp=True instead of temporary=True
+            )
         temp_lp.energy = 0.1
         temp_lp.activation = 0.1
 

@@ -32,8 +32,10 @@ except ImportError:
 try:
     from nltk.corpus import wordnet as wn
     WORDNET_AVAILABLE = True
-except ImportError:
+except (ImportError, KeyboardInterrupt, Exception) as e:
+    print(f"NLTK import failed (likely scipy corruption): {e}")
     WORDNET_AVAILABLE = False
+    wn = None
 
 class ExternalResources:
     def __init__(self):

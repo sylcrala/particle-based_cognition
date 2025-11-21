@@ -424,6 +424,9 @@ def show_particle_details(particle_id, parent=None, agent=None):
         from gui.utils.particle_popup import show_particle_details
         show_particle_details(particle_id, self)
     """
+    if agent is None:
+        agent = api.get_api("agent")
+
     popup = UniversalParticleDetailPopup(particle_id, parent, agent)
     popup.show()
     return popup

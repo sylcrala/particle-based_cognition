@@ -681,6 +681,17 @@ class MetaVoice:
                             relationship_type="input_processing",
                             context = source or "unknown"
                         )
+                        # Trigger contextual collapse for user interactions
+                        if particle:
+                            await self.field.trigger_contextual_collapse(
+                                particle, 
+                                "user_interaction",
+                                cascade_radius=0.7
+                            )
+                            particle.metadata["recently_processed"] = True  # Mark as recently processed
+                            particle.position[8] = 0.8  # Set valence to positive for user input
+                            particle.position[10] = 0.9  # Set intent to high for user input
+                        
                     else:
                         particle = await source_particle.create_linked_particle(
                             particle_type="lingual",
@@ -688,6 +699,10 @@ class MetaVoice:
                             relationship_type="internal_processing",
                             context = source or "unknown"
                         )
+                        if particle:
+                            particle.metadata["recently_processed"] = True  # Mark as recently processed
+                            particle.position[8] = 0.5  # Neutral valence for internal thoughts
+                            particle.position[10] = 0.5  # Moderate intent for internal thoughts
                     
                     text_hash = hash(text.lower().strip()) # hashing processed text to the recently processed list for caching
                     if text_hash not in self._recently_processed:
@@ -713,6 +728,8 @@ class MetaVoice:
                         source_particle_id=source_particle_id if source_particle_id else None,
                         emit_event=False
                     )
+                    particle.position[8] = 0.8 if source == "user_input" else 0.5  # Valence
+                    particle.position[10] = 0.9 if source == "user_input" else 0.5  # Intent
 
                     text_hash = hash(text.lower().strip())
                     if text_hash not in self._recently_processed:

@@ -131,6 +131,19 @@ class AgentCore:
         self.category_bridge = CategoryBridge(self.agent_categorizer)
         self.log("AgentCategorizer and CategoryBridge imported successfully", context="AgentCore.__init__")
 
+        self.log("Importing Semantic Gravity Background Processor...")
+        if hasattr(self.agent_categorizer, 'background_processor'):
+            if self.agent_categorizer.background_processor is None:
+                from apis.agent.cognition.linguistics.semantic_gravity_background_processor import SemanticGravityBackgroundProcessor
+                self.background_semantic_processor = SemanticGravityBackgroundProcessor(
+                    gravity_analyzer=self.semantic_gravity_analyzer,
+                    agent_categorizer=self.agent_categorizer,
+                    memory=self.memory_bank,
+                    field=self.particle_field,
+                    auto_start=False
+                )
+                self.agent_categorizer.background_processor = self.background_semantic_processor
+                self.log("SemanticGravityBackgroundProcessor imported and linked successfully", context="AgentCore.__init__")
 
         self.log("CognitionLoop imported successfully", context="AgentCore.__init__")
 
@@ -148,6 +161,8 @@ class AgentCore:
 
 
         self.log("Agent Core module imports complete, finalizing module threading", context="AgentCore.__init__")
+        # loop threading
+        self.cognition_loop.agent_categorizer = self.agent_categorizer
         # anchor threading
         self.agent_anchor.field = self.particle_field
         # memory threading
@@ -242,7 +257,6 @@ class AgentCore:
             # Finish memory setup
             try:
                 self.memory_bank._setup_memory_coordination()
-                await self.memory_bank._init_background_processor()
                 self.log("Memory coordination setup complete", "SYSTEM", context="run")
             except Exception as e:
                 self.log(f"Memory coordination error: {e}", level="ERROR", context="run")
@@ -256,6 +270,14 @@ class AgentCore:
                 self.log("Lexicon loaded successfully", "SYSTEM", context="run")
             except Exception as e:
                 self.log(f"Lexicon loading error: {e}", level="ERROR", context="run")
+
+            try:
+                await self.background_semantic_processor.initialize_from_lexicon()
+                self.log("Background semantic processor initialized from lexicon", "SYSTEM", context="run")
+            except Exception as e:
+                self.log(f"Background semantic processor initialization error: {e}", level="ERROR", context="run")
+                self.log(f"Full traceback:\n{traceback.format_exc()}", "ERROR", context="run")
+
 
             # Log module availability
             module_status = {
@@ -284,7 +306,7 @@ class AgentCore:
                     
                     # Create tasks that run continuously
                     tasks = [
-                        asyncio.create_task(self.particle_field.continuous_particle_updates(), name="particle_field"),
+                        #asyncio.create_task(self.particle_field.continuous_particle_updates(), name="particle_field"), - testing a move to subconscious loop
                         asyncio.create_task(self.cognition_loop.conscious_loop(), name="conscious_loop"),
                         asyncio.create_task(self.cognition_loop.subconscious_loop(), name="subconscious_loop")
                     ]
@@ -368,15 +390,21 @@ class AgentCore:
     def get_background_processor_stats(self):
         """Get statistics from the semantic gravity background processor"""
         try:
-            if (hasattr(self.memory_bank, 'agent_categorizer') and 
-                self.memory_bank.agent_categorizer and 
-                hasattr(self.memory_bank.agent_categorizer, 'background_processor') and
-                self.memory_bank.agent_categorizer.background_processor and
-                hasattr(self.memory_bank.agent_categorizer.background_processor, 'get_processor_stats')):
+            # Check full chain of dependencies
+            if not hasattr(self, 'agent_categorizer') or not self.agent_categorizer:
+                return {"status": "error", "error": "agent_categorizer not available"}
                 
-                return self.memory_bank.agent_categorizer.background_processor.get_processor_stats()
-            else:
-                return {"status": "background_processor_not_available"}
+            if not hasattr(self.agent_categorizer, 'background_processor'):
+                return {"status": "error", "error": "background_processor not initialized"}
+                
+            if self.agent_categorizer.background_processor is None:
+                return {"status": "error", "error": "background_processor is None"}
+                
+            if not hasattr(self.agent_categorizer.background_processor, 'get_processor_stats'):
+                return {"status": "error", "error": "get_processor_stats method not available"}
+                
+            return self.agent_categorizer.background_processor.get_processor_stats()
+
         except Exception as e:
             self.log(f"Error getting background processor stats: {e}", "ERROR", "get_background_processor_stats")
             return {"status": "error", "error": str(e)}
@@ -498,7 +526,7 @@ class AgentAnchor:
         """Retrieve core particle by its assigned role"""
         try:
             self.log(f"Retrieving core for role: {role}", "DEBUG", "get_core_by_role")
-            particle_list = self.permanent_cores or self.field.particles 
+            particle_list = self.permanent_cores or [p for p in self.field.particles if p.type == "core"]
             for core in particle_list:
                 if core.role == role:
                     self.log(f"Core found for role {role}: ID {core.id}", "DEBUG", "get_core_by_role")

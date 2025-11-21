@@ -39,7 +39,7 @@ from apis.agent.cognition.particles.sensory_particle import SensoryParticle
 from apis.agent.cognition.particles.core_particles import CoreParticle
 
 
-MAX_PARTICLE_COUNT = 500
+MAX_PARTICLE_COUNT = 2000
 
 class ParticleField:
     """
@@ -160,9 +160,19 @@ class ParticleField:
             self.log(f"Particle {particle_id} not found for removal", "WARNING", "remove_particle_with_id")
             return False
 
-    async def spawn_particle(self, id = None, type = None, metadata = None, energy=0.1, activation=0.1, AE_policy=None, emit_event = True, source_particle_id=None, **kwargs):
+    async def spawn_particle(self, id = None, type = None, metadata = None, energy=0.1, activation=0.1, AE_policy=None, emit_event = True, source_particle_id=None, temp=False, temp_purpose=None, **kwargs):
         """
         Spawn a new particle with proper linkage tracking for cognitive mapping
+        
+        Args:
+            temp (bool): If True, spawns a temporary particle with accelerated decay
+            temp_purpose (str): Purpose of temp particle for specialized behavior
+                - "spatial_search": Very fast decay, minimal emotional interference
+                - "hypothesis_test": Moderate decay, valence-influenced behavior
+                - "memory_query": Slow decay, positive emotion bonus
+                - "semantic_analysis": Fast decay for quick analysis
+                - "position_generation": Fast decay for positioning tasks
+                - "embedding_generation": Very fast decay for immediate use
         """
 
         try:
@@ -175,27 +185,27 @@ class ParticleField:
             if type == "memory":
                 particle = MemoryParticle(
                     id=id, metadata=metadata, energy=energy, 
-                    activation=activation, AE_policy=AE_policy, **kwargs
+                    activation=activation, AE_policy=AE_policy, temp=temp, temp_purpose=temp_purpose, **kwargs
                 )
             elif type == "lingual":
                 particle = LingualParticle(
                     id=id, metadata=metadata, energy=energy,
-                    activation=activation, AE_policy=AE_policy, **kwargs
+                    activation=activation, AE_policy=AE_policy, temp=temp, temp_purpose=temp_purpose, **kwargs
                 )
             elif type == "sensory":
                 particle = SensoryParticle(
                     id=id, metadata=metadata, energy=energy,
-                    activation=activation, AE_policy=AE_policy, **kwargs
+                    activation=activation, AE_policy=AE_policy, temp=temp, temp_purpose=temp_purpose, **kwargs
                 )
             elif type == "core":
                 particle = CoreParticle(
                     id=id, metadata=metadata, energy=energy,
-                    activation=activation, AE_policy=AE_policy, **kwargs
+                    activation=activation, AE_policy=AE_policy, temp=temp, temp_purpose=temp_purpose, **kwargs
                 )
             else:
                 particle = SensoryParticle(
                     id=id, type="sensory", metadata=metadata, energy=energy,
-                    activation=activation, AE_policy=AE_policy, **kwargs
+                    activation=activation, AE_policy=AE_policy, temp=temp, temp_purpose=temp_purpose, **kwargs
                 )
                 particle.process_environmental_input("unknown_spawn", "particle_type_unknown")
 
@@ -375,17 +385,23 @@ class ParticleField:
         to_prune = [p for _, p in scored_particles[:safe_prune_count]]
         self.log(f"Pruning {len(to_prune)} particles out of {total_particles} (target was {target_prune_count})", level="INFO", context="prune_low_value_particles")
 
+        pruned_ids = set()
         for p in to_prune:
             p.alive = False
-            self.alive_particles.discard(p.id)
-            self.dead_particles.add(p.id)
+            pruned_ids.add(p.id)
 
-            self._remove_particle_from_grid(p.id)
+        with self._grid_lock:
+            self.alive_particles -= pruned_ids
+            self.dead_particles |= pruned_ids
 
-            self.adaptive_engine.embeddings.pop(p.id, None) # removing pruned particles from AE embeddings
-            self.adaptive_engine.policies.pop(p.id, None)   # removing pruned particles' AE policies
+            self.particles[:] = [p for p in self.particles if p.id not in pruned_ids]
 
-            self.log(f"Pruned low-score particle: {p.id}")
+            for particle_id in pruned_ids:
+                self._remove_particle_from_grid(particle_id)
+                if self.adaptive_engine:
+                    self.adaptive_engine.embeddings.pop(particle_id, None) # removing pruned particles from AE embeddings
+                    self.adaptive_engine.policies.pop(particle_id, None)   # removing pruned particles' AE policies
+                self.log(f"Pruned low-score particle: {particle_id}")
 
     async def _calculate_adaptive_pruning_rate(self) -> float:
         """Dynamically adjust pruning rate based on particle count"""
@@ -481,7 +497,10 @@ class ParticleField:
                     # Calculate collapse probability based on context and distance
                     distance = trigger_particle.distance_to(particle)
                     base_probability = max(0.1, 1.0 - (distance / cascade_radius))
-                    particle.activation += 0.05  # Slight activation boost
+                    particle.activation += 0.005         # Slight activation boost
+                    particle.energy += 0.0025             # Slight energy boost
+                    particle.position[8] += 0.003        # Slight valence boost
+                    particle.position[6] += 0.0001        # Slight frequency boost
 
                     # Context-specific modifiers
                     context_modifier = {
@@ -694,7 +713,7 @@ class ParticleField:
 
     # In field.py - Add this method:
     async def continuous_particle_updates(self):
-        """Dedicated particle update loop running independently"""
+        """Dedicated particle update loop running independently - temporarily deprecated"""
         self.log("Particle update loop started", "INFO", "continuous_particle_updates")
         
         while getattr(self, '_update_active', True):  # Use field-specific flag
@@ -814,6 +833,20 @@ class ParticleField:
         positions = np.stack([p.position for p in alive_particles])
         distance_matrix = batch_hyper_distance_matrix(positions)
 
+        for p in self.particles:
+            if p.alive == False and p.id not in self.dead_particles:
+                self.dead_particles.add(p.id)
+                self.alive_particles.discard(p.id)
+                self.log(f"Particle {p.id} marked as dead and removed from alive set", "INFO", "update_particles")
+            elif p.alive == False and p.id in self.alive_particles:
+                self.alive_particles.discard(p.id)
+                self.dead_particles.add(p.id)
+                self.log(f"Particle {p.id} marked as dead and removed from alive set", "INFO", "update_particles")
+            elif p.alive == True and p.id not in self.alive_particles:
+                self.alive_particles.add(p.id)
+                self.dead_particles.discard(p.id)
+                self.log(f"Particle {p.id} marked as alive and added to alive set", "INFO", "update_particles")
+            
         # Ensure all particles have proper numpy arrays
         for p in alive_particles:
             if not isinstance(p.position, np.ndarray):
@@ -904,6 +937,10 @@ class ParticleField:
             nearby_particles = self.get_particles_in_radius(particle, radius=0.5)
             freq_resonance = 0.0001 * len([p for p in nearby_particles if abs(p.position[6] - particle.position[6]) < 0.1])
             particle.velocity += freq_resonance
+
+            # Valence boost from amount of nearby positive valence particles
+            valence_boost = 0.0001 * len([p for p in nearby_particles if p.position[8] > 0])
+            particle.position[8] += valence_boost
             
             # Energy regeneration: particles slowly recover energy over time
             base_regen = 0.000375  # Base regeneration rate
@@ -1123,9 +1160,7 @@ class ParticleField:
                     old_key = self.particle_grid_cache[particle.id]
                     if old_key in self.spatial_grid:
                         self.spatial_grid[old_key].discard(particle.id)
-                        # Clean up empty grid cells
-                        if not self.spatial_grid[old_key]:
-                            del self.spatial_grid[old_key]
+ 
                 
                 # Add to new grid cell
                 if grid_key not in self.spatial_grid:
@@ -1251,11 +1286,9 @@ class ParticleField:
                     grid_key = self.particle_grid_cache[particle_id]
                     
                     # Remove from grid
-                    if grid_key in self.spatial_grid:
+                    if grid_key in self.spatial_grid and particle_id in self.spatial_grid[grid_key]:
                         self.spatial_grid[grid_key].discard(particle_id)
-                        if not self.spatial_grid[grid_key]:
-                            del self.spatial_grid[grid_key]
-                    
+
                     # Remove from cache
                     del self.particle_grid_cache[particle_id]
                     

@@ -22,7 +22,7 @@ Additional terms apply per TERMS.md. See also ETHICS.md.
 import numpy as np
 from typing import List, Optional, Union
 import hashlib
-
+import asyncio
 from apis.api_registry import api
 
 
@@ -84,7 +84,7 @@ class ParticleLikeEmbedding:
             
             if not related_particles:
                 # If no related particles, spawn a temporary one to get position
-                return self._spawn_temporary_particle_embedding(text)
+                return asyncio.create_task(self._spawn_temporary_particle_embedding(text))
             
             # 2. Extract position vectors from related particles
             position_embeddings = []
@@ -123,7 +123,7 @@ class ParticleLikeEmbedding:
             
         except Exception as e:
             if self.logger:
-                self.logger.log(f"Error in position embedding: {e}", "WARNING", "_generate_position_embedding")
+                self.logger.log(f"Error in position embedding: {e}", "ERROR", "_generate_position_embedding")
             return self._fallback_embedding(text)
     
     def _find_related_particles(self, text: str) -> List:
@@ -174,15 +174,18 @@ class ParticleLikeEmbedding:
         
         return related_particles
     
-    def _spawn_temporary_particle_embedding(self, text: str) -> List[float]:
+    async def _spawn_temporary_particle_embedding(self, text: str) -> List[float]:
         """
         Spawn a temporary particle to get its position as embedding
+        Note: This method may have async issues if spawn_particle is async
         """
         try:
-            # Create temporary particle with text content
-            temp_particle = self.field.spawn_particle(
+            # Create temporary particle with text content using temp=True
+            temp_particle = await self.field.spawn_particle(
                 id=None,
                 type="lingual",
+                temp=True,  # Use temp=True for automatic temp particle handling
+                temp_purpose="embedding_generation",  # Purpose-specific behavior
                 metadata={"content": text, "temporary": True, "embedding_generation": True},
                 emit_event=False
             )

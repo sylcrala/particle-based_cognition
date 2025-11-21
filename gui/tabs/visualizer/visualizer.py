@@ -20,6 +20,7 @@ Additional terms apply per TERMS.md. See also ETHICS.md.
 """
 
 from apis.api_registry import api
+from gui.utils.particle_popup import show_particle_details
 import colorsys
 
 # Set up OpenGL environment for Fedora 42 compatibility
@@ -369,7 +370,14 @@ Escape to close particle details (disabled) |   "P" to save agent state
 
     def on_canvas_click(self, event):
         """Handles mouse click events"""
-        pass
+        if event.button == 1:  # Left click
+            if event.pos is None:
+                return
+            # Check for interactive particles at click position
+            for id, interactive_particle in self.interactive_particles:
+                if interactive_particle.contains(event.pos):
+                    interactive_particle.on_click(event)
+                    break
 
 
     #*# -- CAMERA -- #*#
@@ -654,6 +662,7 @@ class InteractableParticle(Markers):
         super().__init__(**kwargs)
         self.unfreeze()
         self.particle_data = particle_data
+        self.particle_id = str(particle_data.id)
         self.canvas_ref = canvas_ref
 
         render_data = particle_data.render()
@@ -671,6 +680,25 @@ class InteractableParticle(Markers):
         self.interactive = True
         self.events.mouse_press.connect(self.on_click)
 
+    def contains(self, event_pos):
+        """Check if the click is within the particle's area"""
+        if event_pos is None:
+            return False
+        
+        # Get the particle's current position and size
+        pos = self.render_data['position']
+        size = self.display_size
+
+        # Calculate distance from click to particle center
+        dx = event_pos[0] - pos[0]
+        dy = event_pos[1] - pos[1]
+        distance = np.sqrt(dx**2 + dy**2)
+
+        # Check if within particle radius
+        return distance <= size / 2
+    
+
+
     def _get_particle_color(self, render_data):
         """Determine color based on render data"""
         h = (float(render_data['color_hue']) % 360) / 360.0
@@ -686,41 +714,10 @@ class InteractableParticle(Markers):
     def on_click(self, event):
         """Handle click events on the particle"""
         if self.canvas_ref:
-            self.canvas_ref.log(f"Particle {self.particle_data.id} clicked", "INFO", "InteractableParticle")
-            self.show_live_particle_details(self.particle_data)
+            self.canvas_ref.log(f"Particle {self.particle_id} clicked", "INFO", "InteractableParticle")
+            show_particle_details(self.particle_id, parent=self.canvas_ref)
             event.handled = True
 
-    def show_live_particle_details(self, particle_data):
-        """Show live particle details (called by click handler)"""
-        if hasattr(self.canvas_ref, 'detail_overlay') and self.canvas_ref.detail_overlay:
-            self.canvas_ref.detail_overlay.parent = None
-        
-        detail_text = f"""
-LIVE PARTICLE DATA
-==================
-ID: {str(particle_data.id)[:8]}...
-Type: {particle_data.type.upper()}
-Position: {particle_data.position[:3]}
-Energy: {particle_data.energy:.4f}
-Activation: {particle_data.activation:.4f}
-Alive: {particle_data.alive}
-
-QUANTUM STATE:
-Certain: {particle_data.superposition.get('certain', 0.0):.3f}
-Uncertain: {particle_data.superposition.get('uncertain', 0.0):.3f}
-
-Press 'Esc' to close
-"""
-        
-        self.canvas_ref.detail_overlay = Text(
-            detail_text,
-            pos=(50, 50),
-            font_size=12,
-            color='white',
-            parent=self.canvas_ref.view,
-            anchor_x='left',
-            anchor_y='top'
-        )
 
     def update_particle_data(self, new_particle_data):
         """Update this particle's visual data"""

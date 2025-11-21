@@ -20,6 +20,7 @@ Additional terms apply per TERMS.md. See also ETHICS.md.
 """
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QTimer
 from gui.gui import MainWindow
 import sys
 import threading
@@ -31,6 +32,7 @@ from shared_services import system_metrics
 from apis.general_automation import todolist_api
 
 from apis.agent import core
+
 
 def setup_x11_environment():
     """Force XWayland mode for better NVIDIA OpenGL support"""
@@ -55,64 +57,64 @@ def setup_x11_environment():
     os.environ["QT_OPENGL"] = "desktop"
 
 
-def initialize_agent_safe():
-    """Thread-safe agent initialization"""
-    try:
-        # Import and initialize agent
-        print("Initializing agent systems...")
-        agent_core = api.get_api("agent")  # Already registered in core.startup()
-        
-        if agent_core:
-            print("Starting agent async loop...")
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+def run_gui():
+    """Run the GUI - returns the QApplication instance"""
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    return app, window
 
-            loop.run_until_complete(agent_core.run())
-            print("Agent async loop started.")
-        else:
-            print("ERROR: Agent core not found in API registry")
-            
-    except Exception as e:
-        print(f"Error in agent initialization: {str(e)}")
-        import traceback
-        traceback.print_exc()
+def cognition(agent_core = None):
+    """Run the cognition engine in the main thread"""
+    if agent_core:
+        print("Starting agent in unified event loop...")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(agent_core.run())
+    else:
+        print("ERROR: Agent core not found in API registry")
 
-
-
-if __name__ == "__main__":
+def main():
     config = api.get_api("config")
     agent_core = api.get_api("agent")
     
     if config.wayland_active:
         print("Wayland detected, applying compatibility fixes")
-        # Setup X11 environment for better OpenGL support
         setup_x11_environment()
 
     try:
-        # Create Qt application
-        app = QApplication(sys.argv)
-        window = MainWindow()
-        window.show()
-
-        app.processEvents() # ensure gui shows prior to cog framework startup
-
-        # Start agent in separate thread after GUI is ready
-        agent_thread = threading.Thread(
-            target=initialize_agent_safe, 
-            daemon=True
+        # Initialize GUI
+        print("Starting GUI...")
+        app, window = run_gui()
+        app.processEvents()  
+        
+        print("Starting cognitive engine...")
+        cognitive_thread = threading.Thread(
+            target=cognition, 
+            args=(agent_core,),  
+            daemon=True, 
+            name="CognitiveThread"
         )
-        agent_thread.start()
-
-        # Run Qt event loop
+        cognitive_thread.start()
+    
+        print("Running GUI event loop...")
         sys.exit(app.exec())
-    
-    except KeyboardInterrupt as e:
+        
+    except KeyboardInterrupt:
         print("Shutting down application...")
-        api.handle_shutdown()
+        try:
+            asyncio.run(api.handle_shutdown())
+        except:
+            print("Error during shutdown handling")
+            pass
         sys.exit(0)
-    
+        
     except Exception as e:
         print(f"Fatal error in main application: {str(e)}")
         import traceback
-        print(f"Full traceback:\n{traceback.print_exc()}")
+        traceback.print_exc()
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

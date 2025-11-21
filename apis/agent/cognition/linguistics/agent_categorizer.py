@@ -67,12 +67,9 @@ class AgentCategorizer:
                 gravity_analyzer=self.gravity_analyzer,
                 agent_categorizer=self,
                 memory=self.memory,
-                field=self.field
+                field=self.field,
+                auto_start=False
             )
-            
-            self.log("Background processor object created, starting processing...", "DEBUG", "initialize_background_processor")
-            await self.background_processor.start_background_processing()
-            self.log("Background semantic gravity processor initialized and started", "INFO", "initialize_background_processor")
             
         except Exception as e:
             import traceback

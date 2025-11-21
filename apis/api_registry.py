@@ -53,10 +53,10 @@ class APIRegistry:
         else:
             context = "no context"
 
-        if level != None:
-            level = level
-        else:
+        if level == None:
             level = "INFO"
+        else:
+            level = level
 
         source = "ApiRegistry"
 
@@ -211,6 +211,7 @@ class APIRegistry:
                         await memory.force_save()
                         print("Emergency memory save completed")
             except Exception as save_error:
+                self.log(f"Critical: Could not perform emergency save: {str(save_error)}", "ERROR", "handle_shutdown")
                 print(f"Critical: Could not perform emergency save: {save_error}")
 
     async def handle_startup_restoration(self):
@@ -244,6 +245,7 @@ class APIRegistry:
             print("Cognitive state restoration completed successfully")
             
         except Exception as e:
+            self.log(f"Error during state restoration: {str(e)}", "ERROR", "handle_startup_restoration")
             print(f"Error during state restoration: {e}")
             print("Starting with fresh cognitive state...")
 
@@ -270,7 +272,9 @@ class APIRegistry:
             return status
             
         except Exception as e:
+            self.log(f"Error getting agent status: {str(e)}", "ERROR", "get_agent_status")
             return {'error': str(e)}
+
 
 api = APIRegistry()
 

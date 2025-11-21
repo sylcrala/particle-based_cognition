@@ -27,13 +27,14 @@ from apis.api_registry import api
 
 class CognitionLoop:
     
-    def __init__(self, events = None, field = None, adaptive_engine = None, memory = None, voice = None, lexicon = None):
+    def __init__(self, events = None, field = None, adaptive_engine = None, memory = None, voice = None, lexicon = None, agent_categorizer = None):
 
         self.logger = api.get_api("logger")
         self.events = events
         self.field = field
         self.adaptive_engine = adaptive_engine
         self.memory = memory
+        self.agent_categorizer = agent_categorizer
         self.meta_voice = voice
         self.lexicon_store = lexicon
 
@@ -164,6 +165,7 @@ class CognitionLoop:
             if active_particles:
                 self.field.set_conscious_attention(particles=[active_particles[:10]])
 
+
             # Process active particles (conscious attention)
             for particle in active_particles[:10]:  # Focus on top 10
                 if hasattr(particle, 'observe'):
@@ -175,8 +177,28 @@ class CognitionLoop:
                     if collapsed_state == 'certain':
                         self.log(f"Conscious attention collapsed particle {particle.id} to certain state", 
                                 level="DEBUG", context="process_active_cognition")
-
                         
+                if particle.type == "lingual" and hasattr(self.lexicon_store, 'learn_from_particle'):
+                    await self.lexicon_store.learn_from_particle(particle)
+                    
+                    # Real-time semantic token observation for active content
+                    if (hasattr(self, 'agent_categorizer') and 
+                        self.agent_categorizer and 
+                        hasattr(self.agent_categorizer, 'background_processor')):
+                        
+                        # Extract meaningful tokens from particle content for immediate analysis
+                        particle_content = getattr(particle, 'metadata', {}).get('token', '')
+                        if particle_content:
+                            context = {
+                                "source": "conscious_attention",
+                                "particle_id": particle.id,
+                                "activation": particle.activation
+                            }
+                            await self.agent_categorizer.background_processor.observe_compressed_token(
+                                particle_content, context
+                            )
+
+
         except Exception as e:
             self.log(f"Active cognition error: {e}", level="ERROR", context="process_active_cognition")
 
@@ -191,35 +213,80 @@ class CognitionLoop:
                 # Increment cycle counter
                 self.subconscious_cycle_count += 1
                 chance = random.random()
+                
+                # Log cycle progress every 5 cycles for monitoring
+                if self.subconscious_cycle_count % 5 == 0:
+                    self.log(f"Subconscious cycle {self.subconscious_cycle_count} completed", level="DEBUG", context="subconscious_loop")
 
                 if self.field:
-                    # Trigger quantum monitoring every 5 cycles
-                    if self.subconscious_cycle_count % 5 == 0:
+                    if self.field._update_active:
+                        # update particles with batching to prevent blocking
+                        await self.field.update_particles()
+                        await asyncio.sleep(0.05)  
+
+                    # Trigger quantum monitoring every 8 cycles 
+                    if self.subconscious_cycle_count % 8 == 0:
                         await self.monitor_quantum_states(
                             use_spatial_selection=True,
-                            max_particles=250
+                            max_particles=150  
                         )
+                        await asyncio.sleep(0.02)  
 
                 # Perform maintenance every 10 cycles 
                 if self.subconscious_cycle_count % 10 == 0:
-                    self.log(f"Performing subconscious maintenance cycle {self.subconscious_cycle_count}", 
-                            context="subconscious_loop")
+                    #self.log(f"Performing subconscious maintenance cycle {self.subconscious_cycle_count}", context="subconscious_loop")
                     await self.perform_maintenance_cycle()
+                    await asyncio.sleep(0)
 
-                # Process any pending reflections every 20 cycles or ~5% chance
-                if self.subconscious_cycle_count % 20 == 0 or chance < 0.05:
-                    self.log(f"Processing subconscious reflections for cycle {self.subconscious_cycle_count}", 
-                            context="subconscious_loop")
+                # Process any pending reflections every 20 cycles or ~8% chance
+                if self.subconscious_cycle_count % 20 == 0 or chance < 0.08:
+                    #self.log(f"Processing subconscious reflections for cycle {self.subconscious_cycle_count}", context="subconscious_loop")
                     await self.events.emit_event("reflection_triggered", "Request to process particle reflections", source="subconscious_loop")
+                    await asyncio.sleep(0)
 
                 # Trigger autonomous reasoning every 15 cycles
                 if self.subconscious_cycle_count % 15 == 0:
-                    self.log(f"Triggering autonomous reasoning cycle {self.subconscious_cycle_count}", 
-                            context="subconscious_loop")
+                    #self.log(f"Triggering autonomous reasoning cycle {self.subconscious_cycle_count}", context="subconscious_loop")
                     await self.events.emit_event("reasoning_cycle", "Autonomous reasoning and inference", source="subconscious_loop")
+                    await asyncio.sleep(0)
 
-                # Log and save field state periodically
-                if self.subconscious_cycle_count % 500 == 0:
+                ## semantic gravity processing
+                # maintenance every 40 cycles (reduced frequency)
+                if self.subconscious_cycle_count % 40 == 0:
+                    if (hasattr(self, 'agent_categorizer') and 
+                        self.agent_categorizer and 
+                        hasattr(self.agent_categorizer, 'background_processor')):
+                        await self.agent_categorizer.background_processor._subconscious_maintenance_processing()
+                        await asyncio.sleep(0.02)  # Yield after heavy operation
+
+                # full semantic analysis queue every 50 cycles (reduced frequency)
+                if self.subconscious_cycle_count % 50 == 0:
+                    if (hasattr(self, 'agent_categorizer') and 
+                        self.agent_categorizer and 
+                        hasattr(self.agent_categorizer, 'background_processor')):
+                        await self.agent_categorizer.background_processor._process_analysis_queue()
+                        await asyncio.sleep(0.02)  # Yield after heavy operation
+
+                ## lexicon batch processing
+                # process pending lexicon batch every 50 cycles (reduced frequency)
+                if self.subconscious_cycle_count % 50 == 0:
+                    if hasattr(self.lexicon_store, '_flush_pending_batch'):
+                        await self.lexicon_store._flush_pending_batch()
+                        await asyncio.sleep(0.02)  # Yield after batch operation
+
+                ## inference engine
+                # causal inference processing every 60 cycles (reduced frequency)
+                if self.subconscious_cycle_count % 60 == 0:
+                    try:
+                        inference_engine = api.get_api("_agent_inference_engine")
+                        if inference_engine and hasattr(inference_engine, 'infer_causal_relationships'):
+                            await inference_engine.infer_causal_relationships()
+                            await asyncio.sleep(0.02)  # Yield after inference
+                    except Exception as e:
+                        self.log(f"Inference processing error: {e}", "ERROR", "subconscious_loop")
+
+                # Log and save field state every 50 cycles
+                if self.subconscious_cycle_count % 50 == 0:
                     self.log(f"Saving field state on cycle {self.subconscious_cycle_count}", 
                             context="subconscious_loop")
                     try:
@@ -235,11 +302,11 @@ class CognitionLoop:
                             context="field_monitor_loop")
 
                 # Sleep to prevent excessive CPU usage
-                await asyncio.sleep(1.0)  # Adjust timing as needed
+                await asyncio.sleep(0.25)  # Adjust timing as needed
                 
             except Exception as e:
                 self.log(f"Subconscious loop error: {e}", level="ERROR", context="subconscious_loop")
-                await asyncio.sleep(5.0)  # Longer sleep on error
+                await asyncio.sleep(1.0)  # Longer sleep on error
 
 
     async def process_reflection_queue(self):

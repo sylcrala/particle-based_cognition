@@ -394,61 +394,65 @@ class MemoryBank:
     async def quantum_memory_retrieval(self, query: str, collapse_threshold: float = 0.7, thermal_preference = "hot"):
         """Enhanced quantum-aware memory retrieval with particle integration"""
         self.log(f"Quantum memory retrieval for: {query}", context="quantum_memory_retrieval")
-        
-        if not self.field:
-            return await self.search_memories(query)
-        
-        # Find memory particles in field
-        memory_particles = self.field.get_particles_by_type("memory")
-        
-        # Create temporary query particle
-        query_particle = await self.field.spawn_particle(
-            type="lingual",
-            metadata={"content": query, "source": "memory_query", "temporary": True},
-            energy=0.8,
-            activation=0.9,
-            emit_event=False
-        )
-        if query_particle is None:
-            self.log("Failed to spawn query particle", "ERROR", "quantum_memory_retrieval")
-            return []
-        
-        relevant_memories = []
-        
-        # Process memory particles with quantum collapse
-        for memory in memory_particles:
-            distance = query_particle.distance_to(memory)
-            relevance = max(0, 1.0 - distance)
+        try:
+            if not self.field:
+                return await self.search_memories(query)
             
-            if relevance > 0.3:  # Relevance threshold
-                if hasattr(memory, 'observe'):
-                    collapsed_state = memory.observe(context="memory_retrieval")
-                    
-                    if collapsed_state == 'certain' or relevance > collapse_threshold:
-                        # Update thermal state on access
-                        self.update_memory_thermal_state(memory, "retrieval")
+            # Find memory particles in field
+            memory_particles = self.field.get_particles_by_type("memory")
+            
+            # Create temporary query particle using temp=True
+            query_particle = await self.field.spawn_particle(
+                type="lingual",
+                temp=False,  # Use temp=True for automatic temporary particle handling
+                temp_purpose="memory_query",  # Purpose-specific behavior for memory queries
+                metadata={"content": query, "source": "memory_query", "temporary": True},
+                energy=0.8,
+                activation=0.9,
+                emit_event=False
+            )
+            
+            relevant_memories = []
+            
+            # Process memory particles with quantum collapse
+            for memory in memory_particles:
+                distance = query_particle.distance_to(memory)
+                relevance = max(0, 1.0 - distance)
+                
+                if relevance > 0.3:  # Relevance threshold
+                    if hasattr(memory, 'observe'):
+                        collapsed_state = memory.observe(context="memory_retrieval")
                         
-                        # Get corresponding Qdrant memory
-                        qdrant_memory = await self.get_memory_by_particle_id(memory.id)
-                        if qdrant_memory:
-                            qdrant_memory['quantum_state'] = collapsed_state
-                            qdrant_memory['relevance'] = relevance
-                            qdrant_memory['thermal_state'] = memory.metadata.get('thermal_state', 'cool')
-                            qdrant_memory['memory_phase'] = memory.position[7]
-                            relevant_memories.append(qdrant_memory)
-                        
-                        # Create interaction linkage
-                        if hasattr(self.field, 'create_interaction_linkage'):
-                            await self.field.create_interaction_linkage(
-                                query_particle.id, memory.id, "memory_retrieval"
-                            )
-        
-        # Clean up temporary particle
-        if hasattr(query_particle, 'alive'):
-            query_particle.alive = False
-            self.field.remove_particle_with_id(query_particle.id)
-        
-        return relevant_memories
+                        if collapsed_state == 'certain' or relevance > collapse_threshold:
+                            # Update thermal state on access
+                            self.update_memory_thermal_state(memory, "retrieval")
+                            
+                            # Get corresponding Qdrant memory
+                            qdrant_memory = await self.get_memory_by_particle_id(memory.id)
+                            if qdrant_memory:
+                                qdrant_memory['quantum_state'] = collapsed_state
+                                qdrant_memory['relevance'] = relevance
+                                qdrant_memory['thermal_state'] = memory.metadata.get('thermal_state', 'cool')
+                                qdrant_memory['memory_phase'] = memory.position[7]
+                                relevant_memories.append(qdrant_memory)
+                            
+                            # Create interaction linkage
+                            if hasattr(self.field, 'create_interaction_linkage'):
+                                await self.field.create_interaction_linkage(
+                                    query_particle.id, memory.id, "memory_retrieval"
+                                )
+            
+            # Clean up temporary particle
+            if hasattr(query_particle, 'alive'):
+                query_particle.alive = False
+                #self.field.remove_particle_with_id(query_particle.id)
+            
+            return relevant_memories
+
+        except Exception as e:
+            self.log(f"Error in quantum memory retrieval: {e}", "ERROR", "quantum_memory_retrieval")
+            import traceback
+            self.log(f"Quantum retrieval error traceback: {traceback.format_exc()}", "ERROR", "quantum_memory_retrieval")
 
     def _sanitize_payload(self, payload):
         """Sanitize payload to prevent particle object serialization"""
@@ -554,6 +558,8 @@ class MemoryBank:
                     })
                     # Update thermal state for existing memory
                     self.update_memory_thermal_state(memory_particle, "reinforcement")
+                    memory_particle.position[8] += 0.05  # Slightly increase valence on update
+
                     self.log(f"Updated existing memory particle for key: {key}", "DEBUG", "update")
                 else:
                     # Create new memory particle only if none exists
@@ -573,6 +579,8 @@ class MemoryBank:
                         source_particle_id=source_particle_id,
                         emit_event=False
                     )
+                    memory_particle.position[7] = 0.7  # Start new memories warm
+                    memory_particle.position[8] = 0.5  # Neutral valence
                     
                     if memory_particle:
                         # Set initial thermal state for new memory
@@ -820,7 +828,7 @@ class MemoryBank:
                 # Store in Qdrant with wait for confirmation
                 operation_result = self.client.upsert(
                     collection_name=used_collection,
-                    wait=True,
+                    wait=False,
                     points=[point]
                 )
                 
@@ -1210,7 +1218,7 @@ class MemoryBank:
             # Use Qdrant upsert (not ChromaDB syntax!)
             self.client.upsert(
                 collection_name=self.system,  # Use string name
-                wait=True,
+                wait=False,
                 points=[point]
             )
             
@@ -1337,7 +1345,7 @@ class MemoryBank:
             # Store in Qdrant
             self.client.upsert(
                 collection_name=self.consolidated,
-                wait=True,
+                wait=False,
                 points=[point]
             )
             

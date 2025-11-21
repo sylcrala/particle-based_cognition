@@ -30,6 +30,7 @@ from PyQt6.QtGui import QFont, QColor, QPalette
 from apis.api_registry import api
 import json
 from datetime import datetime
+from gui.utils.particle_popup import show_particle_details
 
 
 class AnalysisTab(QWidget):
@@ -59,7 +60,15 @@ class AnalysisTab(QWidget):
         title_font.setBold(True)
         title_label.setFont(title_font)
         header_layout.addWidget(title_label)
-        
+
+        # Subtitle
+        subtitle_label = QLabel("The analysis system is still in development and to be taken with a grain of salt until further testing and confirmation.")
+        subtitle_font = QFont()
+        subtitle_font.setPointSize(12)
+        subtitle_label.setStyleSheet("font-style: italic;")
+        subtitle_label.setFont(subtitle_font)
+        header_layout.addWidget(subtitle_label)
+
         header_layout.addStretch()
         
         # Auto-refresh controls
@@ -326,7 +335,10 @@ class TranslationDashboardTab(QWidget):
         controls_layout.addWidget(self.clear_button)
         
         layout.addLayout(controls_layout)
-        
+
+        self.disclaimer = QLabel("Note: Translation mappings system is still in development and I'm researching it to try to ensure validity, please take mappings with a grain of salt.")
+        layout.addWidget(self.disclaimer)
+
         # Translation table
         self.translation_table = QTableWidget()
         self.translation_table.setColumnCount(4)
@@ -837,7 +849,8 @@ class SemanticGravityTab(QWidget):
     def init_ui(self):
         """Initialize enhanced semantic gravity UI"""
         layout = QVBoxLayout(self)
-        
+        self._create_fallback_ui(layout)
+        """        
         # Import the enhanced analyzer
         try:
             from .utils.enhanced_semantic_gravity import EnhancedSemanticGravityAnalyzer
@@ -847,23 +860,14 @@ class SemanticGravityTab(QWidget):
             # Fallback to basic UI if enhanced analyzer not available
             layout.addWidget(QLabel(f"Enhanced analyzer not available: {e}"))
             self._create_fallback_ui(layout)
-            
+            """
+        
     def _create_fallback_ui(self, layout):
         """Create fallback UI if enhanced analyzer fails to load"""
         
         # Control panel
         controls_layout = QHBoxLayout()
-        
-        # Analysis type selector
-        controls_layout.addWidget(QLabel("Analysis Type:"))
-        self.analysis_type = QComboBox()
-        self.analysis_type.addItem("Gravitational Clustering")
-        self.analysis_type.addItem("Token Frequency Analysis")
-        self.analysis_type.addItem("Spatial Distribution")
-        self.analysis_type.addItem("Confidence Evolution")
-        self.analysis_type.currentTextChanged.connect(self.change_analysis_view)
-        controls_layout.addWidget(self.analysis_type)
-        
+    
         controls_layout.addStretch()
         
         # Time window selector
@@ -964,6 +968,7 @@ class SemanticGravityTab(QWidget):
         ])
         self.frequency_table.setSortingEnabled(True)
         self.frequency_table.horizontalHeader().setStretchLastSection(True)
+
         
         freq_layout.addWidget(self.frequency_table)
         layout.addWidget(freq_group)
@@ -1000,11 +1005,19 @@ class SemanticGravityTab(QWidget):
         ])
         self.spatial_table.setSortingEnabled(True)
         self.spatial_table.horizontalHeader().setStretchLastSection(True)
+        self.spatial_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.spatial_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        #self.spatial_table.itemDoubleClicked.connect(self.show_particle_details)
         
         spatial_layout.addWidget(self.spatial_table)
         layout.addWidget(spatial_group)
         
         return widget
+    
+    def show_particle_details(self, item):
+        """Triggers popup with detailed information about the selected particle"""
+        #TODO
+        pass
         
     def change_analysis_view(self, analysis_type):
         """Change the active analysis view"""
@@ -1073,11 +1086,11 @@ class SemanticGravityTab(QWidget):
             }
             
             # Try to access the background processor directly
-            if (hasattr(agent.memory_bank, 'agent_categorizer') and 
-                agent.memory_bank.agent_categorizer and
-                hasattr(agent.memory_bank.agent_categorizer, 'background_processor')):
+            if (hasattr(agent, 'agent_categorizer') and 
+                agent.agent_categorizer and
+                hasattr(agent.agent_categorizer, 'background_processor')):
                 
-                bg_processor = agent.memory_bank.agent_categorizer.background_processor
+                bg_processor = agent.agent_categorizer.background_processor
                 
                 if bg_processor:
                     gravity_data["status"] = "active"
@@ -1214,11 +1227,11 @@ class SemanticGravityTab(QWidget):
             
             # Fallback to lexicon store method if field data insufficient
             if len(spatial_data) < 10:
-                if (hasattr(agent.memory_bank, 'agent_categorizer') and 
-                    agent.memory_bank.agent_categorizer and
-                    hasattr(agent.memory_bank.agent_categorizer.memory, 'lexicon_store')):
+                if (hasattr(agent, 'agent_categorizer') and 
+                    agent.agent_categorizer and
+                    hasattr(agent, 'lexicon_store')):
                     
-                    lexicon_store = agent.memory_bank.agent_categorizer.memory.lexicon_store
+                    lexicon_store = agent.lexicon_store
                     
                     if hasattr(lexicon_store, 'get_tokens_with_positions'):
                         positioned_tokens = lexicon_store.get_tokens_with_positions(limit=100)

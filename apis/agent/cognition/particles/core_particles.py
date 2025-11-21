@@ -342,10 +342,10 @@ class CoreParticle(Particle):
         """Spawns a temporary core particle for task management and decision making"""
         temp_core = await self.field.spawn_particle(
             type="core",
+            temp=True,  # Use temp=True instead of persistence_lvl="temporary"
             energy=0.5,
             activation=0.7,
             role=task_type,
-            persistence_lvl="temporary",
             emit_event=False
         )
         temp_core.source_particle_id = self.id
@@ -1538,14 +1538,17 @@ class CoreParticle(Particle):
         
         try:
             for hypothesis in hypotheses[:3]:  # Test top 3
-                # Spawn temporary particle at gap position
+                # Spawn temporary particle at gap position using temp=True
                 test_particle = await self.field.spawn_particle(
                     type="lingual",
+                    temp=True,  # Use temp=True for automatic temporary particle handling
+                    temp_purpose="hypothesis_test",  # Purpose-specific temp behavior
                     metadata={
                         "content": hypothesis["hypothesis_content"],
                         "source": "hypothesis_test",
                         "hypothesis_id": str(tested),
-                        "temporary": True
+                        "hypothesis_type": hypothesis.get("type", "gap_fill"),
+                        "expected_valence": hypothesis.get("expected_valence", 0.0)
                     },
                     energy=0.3,
                     activation=0.4,

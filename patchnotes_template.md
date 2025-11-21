@@ -10,4 +10,4 @@ All patchnotes go in the git commit message, seperate into sections per file wit
 
 Under each section name (listed above), create a list of major changes (additions, changes, deletions)
 
-Keep the patchnotes concise and clean, do not add any emojis please
+Keep the patchnotes concise and clean, do not add any emojis please; try not to add opinionated rhetoric either. Solely list out the verifiable changes to each file, with a small summary of all changes if you wish (optional, but not necessary - again stick with purely factual and verifiably information)

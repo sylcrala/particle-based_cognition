@@ -39,11 +39,12 @@ from apis.api_registry import api
 class SemanticGravityBackgroundProcessor:
     """Autonomous background processor for continuous semantic gravity analysis"""
     
-    def __init__(self, gravity_analyzer=None, agent_categorizer=None, memory=None, field=None):
+    def __init__(self, gravity_analyzer=None, agent_categorizer=None, memory=None, field=None, auto_start=True):
         self.gravity_analyzer = gravity_analyzer
         self.agent_categorizer = agent_categorizer
         self.memory = memory
         self.field = field
+        self.auto_start = auto_start
         self.logger = api.get_api("logger")
         
         # Background processing parameters
@@ -74,6 +75,10 @@ class SemanticGravityBackgroundProcessor:
     async def start_background_processing(self):
         """Start the background semantic gravity processing loop"""
         try:
+            if not self.auto_start:
+                self.log("Auto-start disabled, background processing will not start", "INFO", "start_background_processing")
+                return
+            
             if self.background_task:
                 return  # Already running
                 
@@ -82,10 +87,10 @@ class SemanticGravityBackgroundProcessor:
             
             # Load existing translation mappings from memory - TEMPORARILY DISABLED to prevent recursion
             # await self._load_translation_mappings_from_memory()
-            self.log("Translation mapping loading temporarily disabled to prevent recursion loops", "INFO", "start_background_processing")
+            #self.log("Translation mapping loading temporarily disabled to prevent recursion loops", "INFO", "start_background_processing")
                 
-            self.background_task = asyncio.create_task(self._background_loop())
-            self.log("Background semantic gravity processor started", "INFO", "start_background_processing")
+            #self.background_task = asyncio.create_task(self._background_loop())
+            #self.log("Background semantic gravity processor started", "INFO", "start_background_processing")
         except Exception as e:
             self.log(f"Error starting background processing: {e}", "ERROR", "start_background_processing")
 
@@ -96,6 +101,7 @@ class SemanticGravityBackgroundProcessor:
             self.background_task = None
             self.log("Background semantic gravity processor stopped", "INFO", "stop_background_processing")
     
+
     async def initialize_from_lexicon(self):
         """Initialize processor with existing lexicon tokens for analysis"""
         try:
@@ -646,7 +652,7 @@ class SemanticGravityBackgroundProcessor:
                 "consciousness_level": consciousness_level
             }
             
-            # Spawn temporary lingual particle
+            # Spawn temporary lingual particle using temp=True
             temp_particle_id = f"temp_position_{token}_{datetime.now().timestamp()}"
             
             # Use field to spawn particle with semantic content
@@ -654,6 +660,8 @@ class SemanticGravityBackgroundProcessor:
                 particle = await self.field.spawn_particle(
                     id=temp_particle_id,
                     type="lingual",
+                    temp=True,  # Use temp=True instead of manual temp particle creation
+                    temp_purpose="position_generation",  # Purpose-specific behavior
                     metadata=semantic_content,
                     energy=0.05,  # Low energy for temporary particle
                     activation=consciousness_level,
@@ -950,7 +958,7 @@ class SemanticGravityBackgroundProcessor:
         return False
     
     async def _background_loop(self):
-        """Main background processing loop with adaptive intervals"""
+        """Main background processing loop with adaptive intervals - DEPRECATED"""
         try:
             while True:
                 # Adaptive interval based on system load and token quality
@@ -1340,7 +1348,7 @@ class SemanticGravityBackgroundProcessor:
                 and token.lower() not in common_words
                 and token.isalpha()  # Only alphabetic
                 and any(c in token.lower() for c in 'aeiou'))  # Must have vowels
-    
+
     async def _process_analysis_queue(self):
         """Process the current analysis queue"""
         if self.is_processing or not self.analysis_queue:
@@ -1917,11 +1925,11 @@ class SemanticGravityBackgroundProcessor:
                 self.log("No field spatial indexing available, skipping spatial analysis", "DEBUG", "_get_nearby_particles")
                 return []
             
-            # Create a properly structured temporary particle with full 12D position
-            # This matches the exact structure from particle_frame.py: 11 base dims + 2-element phase_vector
-            base_position = np.array([
+            # Create temp particle using field's spawn_particle method with temp=True
+            # Convert field_position dict to proper position array for the particle
+            position_array = np.array([
                 field_position.get('x', 0.5),           # x (spatial)
-                field_position.get('y', 0.5),           # y (spatial)
+                field_position.get('y', 0.5),           # y (spatial)  
                 field_position.get('z', 0.5),           # z (spatial)
                 field_position.get('w', 0.0),           # w (time of creation)
                 field_position.get('t', 0.0),           # t (localized time)
@@ -1931,37 +1939,46 @@ class SemanticGravityBackgroundProcessor:
                 field_position.get('v', 0.0),           # v (valence)
                 field_position.get('i', 0.5),           # i (identity code)
                 field_position.get('n', 0.5),           # n (intent)
-            ], dtype=np.float64)
+            ], dtype=np.float32)
             
-            # Add 2-element phase vector to match real particle structure exactly
+            # Add phase vector (circadian phase) to make it 12D
             phase_angle = field_position.get('phase', 0.0)
-            phase_vector = np.array([np.cos(phase_angle), np.sin(phase_angle)], dtype=np.float64)
+            phase_vector = np.array([np.cos(phase_angle), np.sin(phase_angle)], dtype=np.float32)
+            full_position = np.concatenate((position_array, phase_vector))
             
-            # Concatenate to form proper 12D position matching particle_frame.py structure
-            full_position = np.concatenate((base_position, phase_vector))
+            temp_particle = await self.field.spawn_particle(
+                type="lingual",
+                temp=True,
+                temp_purpose="spatial_search",  # Purpose-specific behavior
+                energy=0.01,
+                activation=0.01,
+                position=full_position,
+                emit_event=False
+            )
             
-            temp_particle = type('TempParticle', (), {
-                'position': full_position,
-                'id': 'temp_spatial_search',
-                'alive': True,
-                'type': 'temp_search'
-            })()
+            if not temp_particle:
+                self.log("Failed to create temp particle for spatial search", "ERROR", "_get_nearby_particles")
+                return []
             
             # Use field's efficient spatial neighbor search with energy constraints
-            # This respects the field's built-in distance-based energy cost system
             nearby_particles = self.field.get_spatial_neighbors(temp_particle, radius=min(radius, 1.5))
+            
+            # Clean up temp particle immediately after use
+            temp_particle.alive = False
+            self.field.alive_particles.discard(temp_particle.id)
+            self.field.particles = [p for p in self.field.particles if p.id != temp_particle.id]
             
             if not nearby_particles:
                 self.log(f"No spatial neighbors found within radius {radius} using field indexing", "DEBUG", "_get_nearby_particles")
                 return []
-            
+
             # Convert to our data format with distance calculation
             neighbor_data = []
             
             for particle in nearby_particles[:15]:  # Limit to 15 to prevent expensive operations
                 if not hasattr(particle, 'position') or not particle.position:
                     continue
-                
+
                 try:
                     # Use field's energy-constrained distance calculation if available
                     if hasattr(self.field, 'calculate_interaction_energy_cost'):

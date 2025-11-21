@@ -128,7 +128,7 @@ class LexiconStore:
             
             # Check for recent processing
             if token.lower() in self.recent_tokens:
-                self.logger.log(f"Token '{token}' already recently processed, skipping to prevent duplication", "DEBUG", "_check_token_deduplication")
+                #self.logger.log(f"Token '{token}' already recently processed, skipping to prevent duplication", "DEBUG", "_check_token_deduplication")
                 return False  # Skip - already processed
             
             # Add to cache
@@ -454,6 +454,8 @@ class LexiconStore:
                 
                 self.logger.log(f"Added '{token}' to lexicon batch (batch size: {len(self.pending_batch)})", "DEBUG", "add_term")
                 
+            
+
             # Update local lexicon cache for fast access
             self.lexicon[token] = new_entry
             
