@@ -193,6 +193,10 @@ class MemoriesTab(QWidget):
             # Adjust column widths
             memory_viewer.resizeColumnsToContents()
             body.addWidget(memory_viewer)
+
+            # Set read only
+            memory_viewer.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            
             
         except Exception as e:
             # If there's an error getting memories, show an error message

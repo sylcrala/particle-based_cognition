@@ -35,12 +35,12 @@ class LogStream(QTextEdit):
         
         self.timer = QTimer(self)   # timer to refresh logs
         self.timer.timeout.connect(self.refresh_logs)
-        self.timer.start(1000)  # refresh every 1 second
+        self.timer.start(3000)  # refresh every 3 seconds
         
     def refresh_logs(self):
         """Fetch logs from the logger and display them."""
         
-        for log in self.logs:
+        for log in self.logs[-self.view_limit:]: # get the latest logs up to view_limit
             if log['id'] in self.displayed_log_ids:
                 continue  # skip already displayed logs
 
