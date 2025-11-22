@@ -364,14 +364,39 @@ class LingualParticle(Particle):
                 
             if token not in self.lexicon_store.lexicon or await self._cached_lexicon_lookup(token, "get_term_def") == Exception:
                 classified = self.ext_res.classify_term(token)
-                definitions = await self.define_term(token, tokens)
-                sources = definitions.keys() if isinstance(definitions, dict) else ["unknown"]                    
-
-                child = await self._store_in_memory(token=token, origin_phrase=tokens, definitions=definitions, classification=classified, sources=sources, context = "learn")
+                definitions = await self.define_term(token)
+                
+                # Handle different return types from define_term
+                if isinstance(definitions, list):
+                    # definitions is a list of dicts: [{source: definition}, ...]
+                    sources = []
+                    for def_dict in definitions:
+                        if isinstance(def_dict, dict):
+                            sources.extend(def_dict.keys())
+                elif isinstance(definitions, dict):
+                    sources = list(definitions.keys())
+                else:
+                    sources = ["unknown"]
+                
+                child = await self._store_in_memory(token=token, origin_phrase=tokens, definitions=definitions, classification=classified, sources=sources)
                 particle.linked_particles["children"].append(child.id)
 
-                for key, value in definitions.items():
-                    await self.memory_bank.link_token(token, value, key, particle)
+                # Process definitions for memory linking
+                if isinstance(definitions, list):
+                    # definitions is a list of dicts: [{source: definition}, ...]
+                    for def_dict in definitions:
+                        if not isinstance(def_dict, dict):
+                            continue
+                        for source, value in def_dict.items():
+                            if value and value != "No definitions found":
+                                key = f"lexicon-{token}"
+                                await self.memory_bank.link_token(token, value, key, particle)
+                elif isinstance(definitions, dict):
+                    # definitions is a plain dict: {source: definition, ...}
+                    for source, value in definitions.items():
+                        if value and value != "No definitions found":
+                            key = f"lexicon-{token}"
+                            await self.memory_bank.link_token(token, value, key, particle)
 
         await self.memory_bank.update(
             key=f"learn-{int(now)}",

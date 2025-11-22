@@ -159,14 +159,18 @@ class LexiconStore:
             else:
                 # Fallback to individual storage
                 for entry in self.pending_batch:
+                    # Extract kwargs and ensure memory_type is set (either from kwargs or default to "lexicon")
+                    entry_kwargs = entry.get("kwargs", {})
+                    if "memory_type" not in entry_kwargs:
+                        entry_kwargs["memory_type"] = "lexicon"
+                    
                     await self.memory.update(
                         key=entry["key"],
                         value=entry["value"],
                         source=entry.get("source", "lexicon_batch"),
                         tags=entry.get("tags", ["lexicon", "batch"]),
-                        memory_type="lexicon",
                         source_particle_id=entry.get("source_particle_id"),
-                        **entry.get("kwargs", {})
+                        **entry_kwargs
                     )
                 
                 self.logger.log(f"Batch fallback storage completed: {batch_size} entries", "INFO", "_flush_pending_batch")

@@ -15,6 +15,7 @@ To install and set up this repository, please run the following:
     git clone https://github.com/sylcrala/particle-based_cogntion.git
     pip install -r requirements.txt
     python -m spacy download en_core_web_sm
+    python ./utils/nltk_data_downloader.py
 ```
 
 Prior to your first launch, please navigate to ./shared_services/config.py and update any required settings

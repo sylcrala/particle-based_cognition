@@ -374,7 +374,7 @@ Escape to close particle details (disabled) |   "P" to save agent state
             if event.pos is None:
                 return
             # Check for interactive particles at click position
-            for id, interactive_particle in self.interactive_particles:
+            for id, interactive_particle in self.interactive_particles.items():
                 if interactive_particle.contains(event.pos):
                     interactive_particle.on_click(event)
                     break
@@ -665,13 +665,14 @@ class InteractableParticle(Markers):
         self.particle_id = str(particle_data.id)
         self.canvas_ref = canvas_ref
 
-        render_data = particle_data.render()
-        display_size = render_data['size']
+        self.render_data = particle_data.render()
+        render_data = self.render_data
+        self.display_size = render_data['size']
 
         # set up marker data
         self.set_data(
             pos = np.array([render_data['position'][:3]], dtype=np.float32),
-            size = np.array([display_size], dtype=np.float32),
+            size = np.array([self.display_size], dtype=np.float32),
             face_color = np.array([self._get_particle_color(render_data)], dtype=np.float32),
         )
         self.freeze()
@@ -724,6 +725,7 @@ class InteractableParticle(Markers):
         self.unfreeze()
         self.particle_data = new_particle_data
         render_data = new_particle_data.render()
+        self.render_data = render_data
         
         self.set_data(
             pos=np.array([render_data['position'][:3]], dtype=np.float32),
