@@ -5,8 +5,9 @@ numpy>=1.21.0
 pillow>=9.0.0 
 pandas
 
-# Database and Vector Storage
+# Database, Storage, and File Handling
 qdrant-client>=1.0.0
+aiofiles
 
 # UI Framework
 pyqt6>=6.9.0

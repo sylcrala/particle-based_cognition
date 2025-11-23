@@ -334,35 +334,37 @@ class ParticleField:
         self.log(f"Beginning pruning at {time()} with {len(self.particles)} particles present.")
 
         alive_particles = [p for p in self.particles if p.alive and p.type != "core"]
-        scored_particles = []
-        for p in alive_particles:
+
+        
+        async def compute_score(p):
+            """Compute vitality score for a single particle"""
             if hasattr(p, "vitality_score"):
-                score = await p.vitality_score()
+                return await p.vitality_score()
             
-            else:  
-                # Base scoring — combine energy and activation
-                base_score = p.energy + p.activation
+            # Base scoring — combine energy and activation
+            base_score = p.energy + p.activation
 
-                # Valence boost (preserve emotionally charged memories)
-                valence = p.position[8]
-                if p.type == "memory":
-                    base_score *= (valence * 1.45)
+            # Valence boost (preserve emotionally charged memories)
+            valence = p.position[8]
+            if p.type == "memory":
+                base_score *= (valence * 1.45)
 
-                # Age penalty (unless consolidated)
-                age_penalty = 1.0
-                if hasattr(p, "age"):
-                    age_penalty = 1 / (1 + p.age)
+            # Age penalty (unless consolidated)
+            age_penalty = 1.0
+            if hasattr(p, "age"):
+                age_penalty = 1 / (1 + p.age)
 
-                # Consolidation flag
-                if p.type == "memory":
-                    if p.metadata.get("consolidated", False) == True:
-                        base_score *= 2  # protect long-term memory
+            # Consolidation flag
+            if p.type == "memory":
+                if p.metadata.get("consolidated", False) == True:
+                    base_score *= 2  # protect long-term memory
 
-                # Score = vitality * (age factor)
-                score = base_score * age_penalty
-
-            # Store for potential pruning
-            scored_particles.append((score, p))
+            # Score = vitality * (age factor)
+            return base_score * age_penalty
+        
+        # Parallel score computation - MUCH faster than sequential
+        scores = await asyncio.gather(*[compute_score(p) for p in alive_particles])
+        scored_particles = list(zip(scores, alive_particles))
 
         # Sort by lowest score
         scored_particles.sort(key=lambda x: x[0])
@@ -385,23 +387,33 @@ class ParticleField:
         to_prune = [p for _, p in scored_particles[:safe_prune_count]]
         self.log(f"Pruning {len(to_prune)} particles out of {total_particles} (target was {target_prune_count})", level="INFO", context="prune_low_value_particles")
 
+        # OPTIMIZATION: Batch all pruning operations together to minimize lock time
         pruned_ids = set()
         for p in to_prune:
             p.alive = False
             pruned_ids.add(p.id)
 
+        # Single lock acquisition for all grid/particle list updates
         with self._grid_lock:
             self.alive_particles -= pruned_ids
             self.dead_particles |= pruned_ids
 
+            # Batch remove from particle list
             self.particles[:] = [p for p in self.particles if p.id not in pruned_ids]
 
+            # Batch remove from grid and adaptive engine
             for particle_id in pruned_ids:
                 self._remove_particle_from_grid(particle_id)
-                if self.adaptive_engine:
-                    self.adaptive_engine.embeddings.pop(particle_id, None) # removing pruned particles from AE embeddings
-                    self.adaptive_engine.policies.pop(particle_id, None)   # removing pruned particles' AE policies
-                self.log(f"Pruned low-score particle: {particle_id}")
+            
+        # OPTIMIZATION: Update adaptive engine outside the lock (if thread-safe)
+        if self.adaptive_engine:
+            for particle_id in pruned_ids:
+                self.adaptive_engine.embeddings.pop(particle_id, None)
+                self.adaptive_engine.policies.pop(particle_id, None)
+        
+        # Log only summary instead of per-particle
+        if pruned_ids:
+            self.log(f"Pruned {len(pruned_ids)} low-score particles: {list(pruned_ids)[:5]}{'...' if len(pruned_ids) > 5 else ''}", level="DEBUG", context="prune_low_value_particles")
 
     async def _calculate_adaptive_pruning_rate(self) -> float:
         """Dynamically adjust pruning rate based on particle count"""
@@ -1303,12 +1315,14 @@ class ParticleField:
                 return particle
         return None
     
-    def save_field_state(self):
+    async def save_field_state(self):
         """
         Save particle field state during graceful shutdown
+        Uses async I/O to prevent blocking
         """
         try:
             import json
+            import aiofiles
             
             # Prepare field state for persistence
             field_state = {
@@ -1333,13 +1347,19 @@ class ParticleField:
                     }
                     field_state["particles_summary"].append(particle_summary)
             
-            # Save to file
+            # Save to file using async I/O
             base_path = self.agent_config.get("memory_dir")
             state_file = f"{base_path}/field_shutdown_state.json"
             os.makedirs(os.path.dirname(state_file), exist_ok=True)
             
-            with open(state_file, 'w') as f:
-                json.dump(field_state, f, indent=2)
+            # Use aiofiles for non-blocking file writes
+            try:
+                async with aiofiles.open(state_file, 'w') as f:
+                    await f.write(json.dumps(field_state, indent=2))
+            except ImportError:
+                # Fallback to sync if aiofiles not available
+                with open(state_file, 'w') as f:
+                    json.dump(field_state, f, indent=2)
             
             self.log(f"Particle field state saved: {field_state['total_particles']} particles", 
                     level="INFO", context="save_field_state")

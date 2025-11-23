@@ -91,10 +91,16 @@ class MainWindow(QMainWindow):
         from gui.tabs.chat.chat import ChatTab
         from gui.tabs.logging.logs import LogsTab
         from gui.tabs.config.config import ConfigTab
-        from gui.tabs.analysis.analysis import AnalysisTab
+        #from gui.tabs.analysis.analysis import AnalysisTab
+        # temporary 
+        AnalysisTab = QWidget()
+        AnalysisTab.setLayout(QVBoxLayout())
+        AnalysisTab.layout().addWidget(QLabel("Analysis Tab temporarily disabled pending rebuild."))
+
+        #
         self.diagnostics_tab = QWidget() #0
         self.main_widget.addWidget(self.diagnostics_tab)
-        self.analytics_tab = AnalysisTab() #1
+        self.analytics_tab = AnalysisTab #1
         self.main_widget.addWidget(self.analytics_tab)
         self.memory_tab = MemoriesTab() #2
         self.main_widget.addWidget(self.memory_tab)

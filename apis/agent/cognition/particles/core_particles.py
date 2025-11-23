@@ -603,8 +603,19 @@ class CoreParticle(Particle):
             # Track validation failures for performance monitoring
             self.performance_stats["validation_failures"] = self.performance_stats.get("validation_failures", 0) + 1
             return None
+        
+        # CRITICAL: Check lexicon's local cache FIRST before trusting term_existence_cache
+        # This prevents false negatives when terms were recently added
+        term_confirmed_in_local_cache = False
+        if hasattr(self, 'lexicon_store') and self.lexicon_store:
+            if token in self.lexicon_store.lexicon:
+                # Term exists in local cache - update existence cache and proceed
+                self.term_existence_cache.mark_term_result(token, exists=True, has_definition=True)
+                self._log_decision(f"Term '{token}' found in local lexicon cache - updating existence cache", "DEBUG")
+                term_confirmed_in_local_cache = True
+                # Don't return yet - let it go through normal cache/lookup flow
             
-        # Check term existence cache first
+        # Check term existence cache
         term_exists = self.term_existence_cache.is_term_known(token)
         if term_exists is False:
             # Confirmed NOT to exist - skip Qdrant entirely
@@ -642,12 +653,18 @@ class CoreParticle(Particle):
             else:
                 result = None
             
-            # Update term existence cache
-            has_meaningful_result = (result is not None and 
-                                   result != token and 
-                                   result != "unknown" and 
-                                   result != f"Term {token} not found in lexicon")
-            self.term_existence_cache.mark_term_result(token, has_meaningful_result, has_meaningful_result)
+            # Update term existence cache ONLY if we didn't already confirm existence from local cache
+            # This prevents overriding confirmed existence with query failures
+            has_meaningful_result = False  # Default value
+            if not term_confirmed_in_local_cache:
+                has_meaningful_result = (result is not None and 
+                                       result != token and 
+                                       result != "unknown" and 
+                                       result != f"Term {token} not found in lexicon")
+                self.term_existence_cache.mark_term_result(token, has_meaningful_result, has_meaningful_result)
+            else:
+                # If we confirmed from local cache, term definitely exists
+                has_meaningful_result = True
             
             # Cache the result
             consciousness_boost = self.consciousness_tracker.get_consciousness_boost("lexicon", token)

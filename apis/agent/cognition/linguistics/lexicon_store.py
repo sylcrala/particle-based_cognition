@@ -175,6 +175,26 @@ class LexiconStore:
                 
                 self.logger.log(f"Batch fallback storage completed: {batch_size} entries", "INFO", "_flush_pending_batch")
             
+            # CRITICAL FIX: After batch flush, sync local cache with Qdrant to capture merged data
+            # memory.update() performs intelligent merging (incrementing encounters, etc.) that we need to reflect locally
+            for entry in self.pending_batch:
+                token = entry["key"].replace("lexicon_", "")  # Extract token from key
+                
+                # Fetch the final merged entry from Qdrant
+                try:
+                    merged_entry = await self.memory.retrieve(key=entry["key"], memory_type="lexicon")
+                    if merged_entry:
+                        # Update local cache with merged data
+                        self.lexicon[token] = merged_entry
+                        
+                        # Update existence cache
+                        if self.memory_coordinator and hasattr(self.memory_coordinator, 'term_existence_cache'):
+                            has_def = len(merged_entry.get("definitions", [])) > 0
+                            self.memory_coordinator.term_existence_cache.mark_term_result(token, exists=True, has_definition=has_def)
+                            self.logger.log(f"Synced local cache for '{token}' - encounters: {merged_entry.get('times_encountered', 0)}", "DEBUG", "_flush_pending_batch")
+                except Exception as sync_error:
+                    self.logger.log(f"Error syncing local cache for '{token}': {sync_error}", "WARNING", "_flush_pending_batch")
+            
             # Clear batch
             self.pending_batch.clear()
             self.last_batch_time = datetime.now()
@@ -463,6 +483,11 @@ class LexiconStore:
             # Update local lexicon cache for fast access
             self.lexicon[token] = new_entry
             
+            # CRITICAL: Update memory coordinator cache to prevent infinite re-learning loop
+            if self.memory_coordinator and hasattr(self.memory_coordinator, 'term_existence_cache'):
+                self.memory_coordinator.term_existence_cache.mark_term_result(token, exists=True, has_definition=True)
+                self.logger.log(f"Invalidated term cache for '{token}' - marked as existing", "DEBUG", "add_term")
+            
             # Set embedding in adaptive engine if provided
             if particle_embedding is not None and self.adaptive_engine:
                 self.adaptive_engine.set_embedding(entry_id, particle_embedding)
@@ -522,6 +547,10 @@ class LexiconStore:
             current_entry = self.lexicon[token]
             current_entry["consciousness_level"] = min(1.0, 
                 current_entry.get("consciousness_level", 0.5) + 0.005)
+            
+            # Ensure cache knows this term exists
+            if self.memory_coordinator and hasattr(self.memory_coordinator, 'term_existence_cache'):
+                self.memory_coordinator.term_existence_cache.mark_term_result(token, exists=True, has_definition=True)
             
             await self.memory.update(
                 key=f"lexicon_{token}",
@@ -692,6 +721,12 @@ class LexiconStore:
                     f"Loaded {loaded_count} lexicon entries from Qdrant ({consciousness_terms} high-consciousness)", 
                     "INFO", "load_lexicon"
                 )
+                
+                # CRITICAL: Prime the memory coordinator cache with all loaded terms
+                if self.memory_coordinator and hasattr(self.memory_coordinator, 'term_existence_cache'):
+                    for token in self.lexicon.keys():
+                        self.memory_coordinator.term_existence_cache.mark_term_result(token, exists=True, has_definition=True)
+                    self.logger.log(f"Primed memory coordinator cache with {len(self.lexicon)} terms", "INFO", "load_lexicon")
                 
             else:
                 self.logger.log("No lexicon memories found in Qdrant system", "INFO", "load_lexicon")

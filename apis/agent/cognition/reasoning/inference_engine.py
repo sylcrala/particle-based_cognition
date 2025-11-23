@@ -368,6 +368,11 @@ class InferenceEngine:
             # Generate abstract concept name from cluster content
             concept_name = await self._generate_concept_name(cluster)
             
+            # Skip if no meaningful concept name could be generated
+            # This prevents creating particles with placeholder content that gets learned incorrectly
+            if not concept_name:
+                continue
+            
             # Spawn abstract particle
             abstract_particle = await self.field.spawn_particle(
                 type="lingual",
@@ -431,11 +436,13 @@ class InferenceEngine:
                 contents.append(content)
         
         if not contents:
-            return f"Abstract Concept {len(cluster)} particles"
+            # Return None or empty to indicate no meaningful name could be generated
+            # This prevents placeholder text from being learned as actual content
+            return None
         
         # Simple approach: use most common words
         words = " ".join(contents).split()[:10]
-        return f"Concept: {' '.join(words[:3])}..." if words else "Unknown Concept"
+        return f"Concept: {' '.join(words[:3])}..." if words else None
     
     # ==================== CAUSAL REASONING ====================
     
